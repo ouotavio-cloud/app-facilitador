@@ -41,9 +41,17 @@ def login_and_save_session() -> None:
 
 
 def _open_inbox(context: BrowserContext) -> Page:
+    """Abre a caixa de entrada e espera os itens da lista aparecerem.
+
+    Não usamos `wait_for_load_state("networkidle")`: o Outlook Web mantém
+    sincronização em segundo plano o tempo todo, então a rede nunca fica
+    de fato ociosa e essa espera expira por timeout. Esperar diretamente
+    pelo primeiro seletor de item de e-mail é mais confiável.
+    """
     page = context.new_page()
     page.goto(config.OWA_URL)
-    page.wait_for_load_state("networkidle", timeout=60_000)
+    combined_selector = ", ".join(_MESSAGE_ITEM_SELECTORS)
+    page.wait_for_selector(combined_selector, timeout=60_000)
     return page
 
 
