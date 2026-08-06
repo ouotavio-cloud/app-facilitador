@@ -7,6 +7,10 @@ venv/
 # Cache local do token de autenticação (nunca deve ser versionado)
 .token_cache.bin
 
+# Sessão salva do navegador (contém cookies de login — nunca versionar)
+.browser_state.json
+debug_*.png
+
 # Estado local do app (banco de dados, propostas baixadas)
 data/
 *.db

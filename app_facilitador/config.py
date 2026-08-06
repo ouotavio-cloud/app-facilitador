@@ -17,3 +17,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TOKEN_CACHE_PATH = BASE_DIR / ".token_cache.bin"
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+
+# Automação do Outlook Web (usada quando a Graph API está bloqueada por
+# política de TI e não há cache local legível do novo Outlook).
+OWA_URL = "https://outlook.office.com/mail/"
+BROWSER_STATE_PATH = BASE_DIR / ".browser_state.json"
