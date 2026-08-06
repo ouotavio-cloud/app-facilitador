@@ -103,8 +103,12 @@ def dump_inbox_debug(limit: int = 10) -> None:
                 aria_label = items.nth(i).get_attribute("aria-label")
                 print(f"  [{i}] {aria_label!r}")
 
-            html_dump_path = config.BASE_DIR / "debug_inbox_item0.html"
-            html_dump_path.write_text(items.nth(0).evaluate("el => el.outerHTML"), encoding="utf-8")
-            print(f"\nHTML do item [0] salvo em {html_dump_path}")
+            html_dump_path = config.BASE_DIR / "debug_inbox_items.html"
+            chunks = []
+            for i in range(count):
+                outer_html = items.nth(i).evaluate("el => el.outerHTML")
+                chunks.append(f"<!-- ===== item [{i}] ===== -->\n{outer_html}")
+            html_dump_path.write_text("\n\n".join(chunks), encoding="utf-8")
+            print(f"\nHTML de todos os {count} itens salvo em {html_dump_path}")
 
         browser.close()
