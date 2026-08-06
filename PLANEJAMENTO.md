@@ -18,7 +18,18 @@ Documento de planejamento antes de iniciar a implementação. Cobre escopo, arqu
 ### Bloco 3 — Sugestões adicionais
 Ver seção 8.
 
-## 2. Premissas que precisam ser validadas com o usuário
+## 2. Esclarecimento importante: execução local vs. registro no Azure AD
+
+Critério essencial do usuário: **o app roda somente na máquina dele** (sem servidor, sem backend remoto, sem dado armazenado em nuvem além do necessário).
+
+Ambiente confirmado: **Windows + "novo Outlook"** (interface reformulada da Microsoft, também chamada de Monarch/One Outlook). Isso muda o que é tecnicamente possível:
+
+- O **novo Outlook não expõe automação COM** (o que o Outlook clássico expõe via `pywin32`). Não há como ler a caixa de e-mail do novo Outlook sem o programa conversar, de alguma forma, com os servidores da Microsoft — a mensagem em si vive na nuvem, o novo Outlook não mantém um arquivo local completo e navegável como o `.ost` do clássico.
+- As alternativas avaliadas foram: (A) IMAP com usuário/senha local, (B) leitura do cache interno não documentado do novo Outlook, (C) OAuth pessoal via um registro mínimo no Azure AD.
+- **Decisão confirmada com o usuário: opção (C).** Um registro de app no Azure AD, nesse caso, é **gratuito, feito pela própria pessoa em poucos minutos, sem aprovação de TI** (para permissões delegadas de leitura como `Mail.Read`/`Calendars.Read` no próprio usuário) e **não implica nenhum servidor ou infraestrutura na nuvem** — ele serve apenas como identidade para o handshake OAuth, da mesma forma que o próprio Outlook já autentica o usuário. Nenhum dado passa por infraestrutura própria; o app roda inteiramente na máquina do usuário e fala diretamente com a Microsoft Graph API, como qualquer cliente de e-mail (Outlook, Thunderbird, app do celular) já faz.
+- Ou seja: **"rodar só na minha máquina" está preservado** — o que não existe mais é a opção de fazer isso via COM/automação local pura, porque o cliente instalado (novo Outlook) não permite.
+
+## 3. Premissas que precisam ser validadas com o usuário
 
 Estas são decisões de negócio que impactam a implementação e que assumo como hipótese razoável até confirmação:
 
@@ -32,11 +43,11 @@ Estas são decisões de negócio que impactam a implementação e que assumo com
 
 Essas hipóteses devem ser confirmadas no início da Fase 0, pois mudam o desenho do banco de dados e das regras de negócio.
 
-## 3. Escolha de tecnologia
+## 4. Escolha de tecnologia
 
-**Requisito central:** integração robusta com Outlook (e-mail + calendário), leitura de anexos em múltiplos formatos, varredura em lote, execução periódica/agendada e um painel simples.
+**Requisito central:** integração robusta com Outlook (e-mail + calendário), leitura de anexos em múltiplos formatos, varredura em lote, execução periódica/agendada e um painel simples — tudo rodando localmente na máquina do usuário.
 
-**Integração com Outlook:** usar a **Microsoft Graph API** (não IMAP/EWS legado) — é a API oficial e suportada, dá acesso a mensagens, pastas, anexos, calendário e OneDrive/SharePoint com o mesmo modelo de autenticação (OAuth2 via Azure AD App Registration).
+**Integração com Outlook:** usar a **Microsoft Graph API** (não IMAP/EWS legado) — é a API oficial e suportada, dá acesso a mensagens, pastas, anexos, calendário e OneDrive/SharePoint com o mesmo modelo de autenticação (OAuth2 via Azure AD App Registration pessoal, conforme decidido na seção 2). O app é apenas um cliente dessa API, exatamente como o próprio Outlook — não há servidor nem backend do lado do desenvolvedor.
 
 **Linguagem/stack recomendada: Python 3.11+**
 - Parsing de documentos e OCR têm o ecossistema mais maduro em Python: `pdfplumber`/`PyPDF2` (PDF), `python-docx` (Word), `openpyxl` (Excel), `pytesseract` + `Pillow` (OCR de imagens/PDF escaneado).
@@ -49,7 +60,7 @@ Essas hipóteses devem ser confirmadas no início da Fase 0, pois mudam o desenh
 
 **Alternativa sem código (mencionar, não recomendar como principal):** Power Automate consegue mover e-mails com regras simples, mas não resolve bem extração de texto de anexos variados (OCR, tabelas dentro de PDF) nem a varredura histórica completa com deduplicação — por isso Python com Graph API é a escolha principal.
 
-## 4. Arquitetura (visão geral)
+## 5. Arquitetura (visão geral)
 
 ```
 [Agendador] --> [Conector Graph API] --> [Detector de Proposta] --> [Extrator de Anexo/OCR]
@@ -78,11 +89,11 @@ Componentes:
 8. **Notificador** — resumo ao final da varredura (notificação no sistema, e-mail ou Teams).
 9. **Painel** — e-mails novos, reuniões do dia, prazos em risco.
 
-## 5. Roadmap por fases (com testes em cada uma)
+## 6. Roadmap por fases (com testes em cada uma)
 
 ### Fase 0 — Descoberta e setup (1–2 dias)
-- Validar as premissas da seção 2 com o usuário.
-- Registrar o app no Azure AD (App Registration), definir permissões delegadas mínimas: `Mail.Read`, `Calendars.Read` (e `Files.ReadWrite` só se decidir usar OneDrive).
+- Validar as premissas da seção 3 com o usuário.
+- Registrar o app no Azure AD (App Registration pessoal, gratuita, sem TI), definir permissões delegadas mínimas: `Mail.Read`, `Calendars.Read` (e `Files.ReadWrite` só se decidir usar OneDrive).
 - Estrutura inicial do projeto, ambiente virtual, dependências.
 - **Teste:** autenticação OAuth (fluxo device code) e smoke test listando os 5 últimos e-mails.
 
@@ -124,14 +135,14 @@ Componentes:
 - Piloto de 1–2 semanas, ajuste de regex/regras de classificação com base em casos reais que falharem.
 - Documentação de uso (README) e forma de execução (agendada via Task Scheduler/cron, ou app residente na bandeja do sistema).
 
-## 6. Estratégia geral de testes
+## 7. Estratégia geral de testes
 
 - **Unitários:** parsing de regex do código de proposta, extração de texto por tipo de arquivo, cálculo de prazo.
 - **Integração com mocks:** respostas gravadas da Graph API para não depender de rede/caixa real em CI.
 - **Integração real (ambiente piloto):** rodar contra a caixa do usuário em modo leitura, sem mover/apagar nada, validando os resultados antes de habilitar qualquer ação automática (como mover e-mails ou criar pastas de fato).
 - **Regressão:** conjunto de e-mails/anexos de exemplo (incluindo o modelo já enviado pelo usuário) versionado como fixture de teste, para garantir que mudanças futuras não quebrem a detecção.
 
-## 7. Riscos e como mitigar
+## 8. Riscos e como mitigar
 
 | Risco | Mitigação |
 |---|---|
@@ -141,7 +152,7 @@ Componentes:
 | Perda de acesso/token expirado durante execução agendada | Refresh automático de token + alerta se a reautenticação manual for necessária |
 | Duplicação de arquivos entre execuções | Controle de estado por message-id + hash do conteúdo |
 
-## 8. Sugestões adicionais (Bloco 3)
+## 9. Sugestões adicionais (Bloco 3)
 
 - **Mapa comparativo automático:** quando 2+ fornecedores responderem ao mesmo processo, montar automaticamente uma planilha comparando os valores extraídos das propostas.
 - **Cobrança automática de fornecedores:** alertar (e sugerir e-mail de cobrança) quando um processo está perto do prazo e algum fornecedor convidado ainda não respondeu.
@@ -151,8 +162,8 @@ Componentes:
 - **Priorização de e-mails novos** (ex.: sinalizar e-mails de clientes/obras críticas primeiro).
 - **Integração com Teams/WhatsApp** para notificações fora do horário em que o app estiver aberto.
 
-## 9. Próximos passos imediatos
+## 10. Próximos passos imediatos
 
-1. Confirmar com o usuário as premissas da seção 2 (principalmente: onde ficam as pastas e como a tabela de Processos é alimentada).
-2. Registrar o App no Azure AD e obter as credenciais (client_id, tenant_id).
-3. Implementar a Fase 0 e 1 (autenticação + leitura básica) como primeiro entregável testável.
+1. Confirmar com o usuário as premissas da seção 3 (principalmente: onde ficam as pastas e como a tabela de Processos é alimentada).
+2. Registrar o App pessoal no Azure AD e obter as credenciais (client_id, tenant_id) — processo rápido, sem TI, feito pelo próprio usuário.
+3. Implementar a Fase 0 e 1 (autenticação + leitura básica) como primeiro entregável testável, validando desde já que tudo roda localmente sem nenhum componente de servidor.
