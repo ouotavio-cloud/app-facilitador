@@ -6,7 +6,9 @@ seção 2). O usuário loga manualmente uma vez; a sessão fica salva
 localmente para reaproveitar nas próximas execuções.
 """
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+import re
+
+from playwright.sync_api import BrowserContext, Locator, Page, sync_playwright
 
 from app_facilitador import config
 
@@ -19,6 +21,83 @@ _MESSAGE_ITEM_SELECTORS = [
     'div[role="listitem"]',
     '[data-convid]',
 ]
+
+# Classes CSS observadas na estrutura real do Outlook Web (calibradas via
+# scripts/browser_inbox_debug.py) para localizar remetente, assunto e
+# preview dentro de um item da lista. São classes geradas pelo build do
+# Fluent UI (Griffel) e podem mudar quando a Microsoft atualizar o Outlook
+# Web — se a extração parar de funcionar, recalibrar com o script de
+# diagnóstico antes de mexer aqui.
+_JS_EXTRACT_ITEM_FIELDS = """
+el => {
+    const senderSpan = el.querySelector('.ESO13 span[title]');
+    const subjectSpan = el.querySelector('.IjzWp span');
+    const previewSpan = el.querySelector('.ASFJj');
+    const titledSpans = Array.from(el.querySelectorAll('span[title]'));
+    const dateSpan = titledSpans.find(s => s !== senderSpan);
+    return {
+        sender_name: senderSpan ? senderSpan.textContent.trim() : null,
+        sender_email: senderSpan ? senderSpan.getAttribute('title') : null,
+        subject: subjectSpan ? subjectSpan.textContent.trim() : null,
+        date_title: dateSpan ? dateSpan.getAttribute('title') : null,
+        preview: previewSpan ? previewSpan.textContent.trim() : null,
+    };
+}
+"""
+
+# Itens fixados ("Fixado") no topo da caixa de entrada usam um layout mais
+# compacto que não expõe data nem preview como elementos separados do DOM
+# — só aparecem concatenados no aria-label da linha inteira. Esse regex é
+# o fallback pra extrair a data nesse caso.
+_DATE_IN_ARIA_LABEL_PATTERN = re.compile(r"\d{2}/\d{2}/\d{4}")
+
+
+def _parse_message_row(raw: dict, row_aria_label: str) -> dict:
+    """Combina os campos extraídos do DOM com informação só disponível no aria-label.
+
+    Recebe o dicionário bruto de `_JS_EXTRACT_ITEM_FIELDS` e o aria-label
+    da linha inteira (que sempre existe, mesmo quando faltam elementos
+    visíveis — caso dos itens fixados).
+    """
+    sender_name = raw.get("sender_name") or ""
+    prefix = row_aria_label.split(sender_name, 1)[0] if sender_name else ""
+
+    date_title = raw.get("date_title")
+    if date_title is None:
+        match = _DATE_IN_ARIA_LABEL_PATTERN.search(row_aria_label)
+        date_title = match.group(0) if match else None
+
+    return {
+        "sender_name": sender_name,
+        "sender_email": raw.get("sender_email"),
+        "subject": (raw.get("subject") or "").strip(),
+        "received_at": date_title,
+        "preview": raw.get("preview"),
+        "is_pinned": "Fixado" in prefix,
+        "has_attachments": "Tem anexos" in prefix,
+    }
+
+
+def _extract_message(item: Locator) -> dict:
+    raw = item.evaluate(_JS_EXTRACT_ITEM_FIELDS)
+    row_aria_label = item.get_attribute("aria-label") or ""
+    message = _parse_message_row(raw, row_aria_label)
+    message["conv_id"] = item.get_attribute("data-convid")
+    return message
+
+
+def list_visible_messages(page: Page) -> list[dict]:
+    """Extrai os e-mails atualmente renderizados na tela (sem rolar a lista).
+
+    Só cobre o que já está no DOM — a lista do Outlook Web é virtualizada,
+    então isso não é uma varredura completa da caixa de entrada (ver
+    PLANEJAMENTO.md, seção 1.3). A varredura completa (com scroll) é um
+    passo futuro que reaproveita esta função para cada trecho carregado.
+    """
+    _, items = _find_message_items(page)
+    if items is None:
+        return []
+    return [_extract_message(items.nth(i)) for i in range(items.count())]
 
 
 def login_and_save_session() -> None:
