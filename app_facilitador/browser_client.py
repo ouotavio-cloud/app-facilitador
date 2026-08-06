@@ -100,6 +100,44 @@ def list_visible_messages(page: Page) -> list[dict]:
     return [_extract_message(items.nth(i)) for i in range(items.count())]
 
 
+def print_visible_messages() -> None:
+    """Abre a caixa de entrada e imprime os e-mails visíveis já estruturados.
+
+    Serve para validar visualmente a extração (list_visible_messages)
+    contra a caixa real, antes de acoplar isso ao restante do pipeline
+    (detecção de proposta, classificação, etc.).
+    """
+    if not config.BROWSER_STATE_PATH.exists():
+        raise RuntimeError(
+            "Nenhuma sessão salva encontrada. Rode primeiro: "
+            "python scripts/browser_login.py"
+        )
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=False)
+        context = browser.new_context(storage_state=str(config.BROWSER_STATE_PATH))
+        page = _open_inbox(context)
+
+        messages = list_visible_messages(page)
+        print(f"{len(messages)} e-mails visíveis:\n")
+        for i, message in enumerate(messages):
+            flags = ""
+            if message["is_pinned"]:
+                flags += " [Fixado]"
+            if message["has_attachments"]:
+                flags += " [Tem anexos]"
+            print(f"[{i}]{flags}")
+            print(f"  De: {message['sender_name']} <{message['sender_email']}>")
+            print(f"  Assunto: {message['subject']}")
+            print(f"  Recebido: {message['received_at']}")
+            preview = message["preview"]
+            if preview:
+                print(f"  Preview: {preview[:120]}")
+            print()
+
+        browser.close()
+
+
 def login_and_save_session() -> None:
     """Abre um navegador visível para o usuário logar manualmente uma vez."""
     with sync_playwright() as playwright:
