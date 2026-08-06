@@ -16,6 +16,10 @@ SCOPES = ["Mail.Read", "Calendars.Read"]
 BASE_DIR = Path(__file__).resolve().parent.parent
 TOKEN_CACHE_PATH = BASE_DIR / ".token_cache.bin"
 
+# Banco de estado local: mensagens já processadas e códigos de processo
+# encontrados. Arquivo único, sem servidor (ver PLANEJAMENTO.md, seção 4).
+DB_PATH = BASE_DIR / "app_facilitador.db"
+
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 
 # Automação do Outlook Web (usada quando a Graph API está bloqueada por
