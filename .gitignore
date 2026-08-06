@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Cache local do token de autenticação (nunca deve ser versionado)
+.token_cache.bin
+
+# Estado local do app (banco de dados, propostas baixadas)
+data/
+*.db

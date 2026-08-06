@@ -29,6 +29,8 @@ Ambiente confirmado: **Windows + "novo Outlook"** (interface reformulada da Micr
 - **Decisão confirmada com o usuário: opção (C).** Um registro de app no Azure AD, nesse caso, é **gratuito, feito pela própria pessoa em poucos minutos, sem aprovação de TI** (para permissões delegadas de leitura como `Mail.Read`/`Calendars.Read` no próprio usuário) e **não implica nenhum servidor ou infraestrutura na nuvem** — ele serve apenas como identidade para o handshake OAuth, da mesma forma que o próprio Outlook já autentica o usuário. Nenhum dado passa por infraestrutura própria; o app roda inteiramente na máquina do usuário e fala diretamente com a Microsoft Graph API, como qualquer cliente de e-mail (Outlook, Thunderbird, app do celular) já faz.
 - Ou seja: **"rodar só na minha máquina" está preservado** — o que não existe mais é a opção de fazer isso via COM/automação local pura, porque o cliente instalado (novo Outlook) não permite.
 
+**Atualização (bloqueio de TI encontrado na prática):** ao tentar criar o App Registration, o usuário recebeu erro de acesso negado (401 "Você não tem acesso") no portal Azure — a organização restringe o "App registrations" a administradores. Solução adotada: **não registrar um app próprio**. Em vez disso, usar um client_id público já existente e mantido pela própria Microsoft, o **"Microsoft Graph Command Line Tools"** (`14d82eec-204b-4c2f-b7e8-296a70dab67e`), disponível em qualquer tenant. Ele permite o fluxo *device code* pedindo apenas **consentimento comum do usuário** (tela de "Permitir acesso" que qualquer conta pode aceitar) para `Mail.Read`/`Calendars.Read`, sem precisar de aprovação de TI nem de registro próprio no Azure AD. Isso substitui a etapa de "registrar app" em todo o restante deste documento. Se o tenant também bloquear consentimento de usuário a qualquer app (caso mais raro), a alternativa é IMAP (opção A).
+
 ## 3. Premissas que precisam ser validadas com o usuário
 
 Estas são decisões de negócio que impactam a implementação e que assumo como hipótese razoável até confirmação:
@@ -47,7 +49,7 @@ Essas hipóteses devem ser confirmadas no início da Fase 0, pois mudam o desenh
 
 **Requisito central:** integração robusta com Outlook (e-mail + calendário), leitura de anexos em múltiplos formatos, varredura em lote, execução periódica/agendada e um painel simples — tudo rodando localmente na máquina do usuário.
 
-**Integração com Outlook:** usar a **Microsoft Graph API** (não IMAP/EWS legado) — é a API oficial e suportada, dá acesso a mensagens, pastas, anexos, calendário e OneDrive/SharePoint com o mesmo modelo de autenticação (OAuth2 via Azure AD App Registration pessoal, conforme decidido na seção 2). O app é apenas um cliente dessa API, exatamente como o próprio Outlook — não há servidor nem backend do lado do desenvolvedor.
+**Integração com Outlook:** usar a **Microsoft Graph API** (não IMAP/EWS legado) — é a API oficial e suportada, dá acesso a mensagens, pastas, anexos, calendário e OneDrive/SharePoint com o mesmo modelo de autenticação (OAuth2, usando o client_id público "Microsoft Graph Command Line Tools" com consentimento de usuário, conforme decidido na seção 2 — sem App Registration próprio). O app é apenas um cliente dessa API, exatamente como o próprio Outlook — não há servidor nem backend do lado do desenvolvedor.
 
 **Linguagem/stack recomendada: Python 3.11+**
 - Parsing de documentos e OCR têm o ecossistema mais maduro em Python: `pdfplumber`/`PyPDF2` (PDF), `python-docx` (Word), `openpyxl` (Excel), `pytesseract` + `Pillow` (OCR de imagens/PDF escaneado).
@@ -93,7 +95,7 @@ Componentes:
 
 ### Fase 0 — Descoberta e setup (1–2 dias)
 - Validar as premissas da seção 3 com o usuário.
-- Registrar o app no Azure AD (App Registration pessoal, gratuita, sem TI), definir permissões delegadas mínimas: `Mail.Read`, `Calendars.Read` (e `Files.ReadWrite` só se decidir usar OneDrive).
+- Usar o client_id público "Microsoft Graph Command Line Tools" (sem App Registration próprio, ver seção 2), com consentimento de usuário para `Mail.Read`, `Calendars.Read`.
 - Estrutura inicial do projeto, ambiente virtual, dependências.
 - **Teste:** autenticação OAuth (fluxo device code) e smoke test listando os 5 últimos e-mails.
 
@@ -165,5 +167,5 @@ Componentes:
 ## 10. Próximos passos imediatos
 
 1. Confirmar com o usuário as premissas da seção 3 (principalmente: onde ficam as pastas e como a tabela de Processos é alimentada).
-2. Registrar o App pessoal no Azure AD e obter as credenciais (client_id, tenant_id) — processo rápido, sem TI, feito pelo próprio usuário.
-3. Implementar a Fase 0 e 1 (autenticação + leitura básica) como primeiro entregável testável, validando desde já que tudo roda localmente sem nenhum componente de servidor.
+2. ~~Registrar App no Azure AD~~ — descartado (bloqueado por política de TI); usando client_id público da Microsoft (seção 2). **Feito.**
+3. Implementar a Fase 0 e 1 (autenticação + leitura básica) como primeiro entregável testável, validando desde já que tudo roda localmente sem nenhum componente de servidor. **Em andamento — ver `app_facilitador/auth.py` e `scripts/smoke_test_auth.py`.**
