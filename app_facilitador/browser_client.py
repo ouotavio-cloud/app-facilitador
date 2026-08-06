@@ -90,4 +90,13 @@ def dump_inbox_debug(limit: int = 10) -> None:
                 text = items.nth(i).inner_text().replace("\n", " | ")
                 print(f"  [{i}] {text}")
 
+            print("\n--- aria-label de cada item (para calibrar o parser) ---\n")
+            for i in range(count):
+                aria_label = items.nth(i).get_attribute("aria-label")
+                print(f"  [{i}] {aria_label!r}")
+
+            html_dump_path = config.BASE_DIR / "debug_inbox_item0.html"
+            html_dump_path.write_text(items.nth(0).evaluate("el => el.outerHTML"), encoding="utf-8")
+            print(f"\nHTML do item [0] salvo em {html_dump_path}")
+
         browser.close()
