@@ -1,0 +1,158 @@
+# App Facilitador — Planejamento do Projeto
+
+Documento de planejamento antes de iniciar a implementação. Cobre escopo, arquitetura, escolha de tecnologia, fases, testes e riscos.
+
+## 1. Escopo funcional (a partir do pedido do usuário)
+
+### Bloco 1 — Captura e organização de propostas de fornecedores
+- **1.1** Analisar a caixa de e-mail (Outlook) e identificar respostas de fornecedores que sejam propostas comerciais vinculadas a um processo de cotação enviado pelo usuário. Identificação por código no padrão `SUP.AAAA-NNN` (ex.: `SUP.2026-197`).
+- **1.2** Armazenar cada proposta seguindo a hierarquia de pastas: `Obra / Processo / Fornecedor / Proposta`.
+- **1.3** Extrair a proposta independentemente do formato do anexo (PDF, DOCX, XLSX, imagem escaneada) e varrer o Outlook por completo (histórico, não só e-mails novos).
+- **1.4** Notificar o usuário ao final da varredura, com um resumo do que foi encontrado/arquivado.
+
+### Bloco 2 — Painel de tarefas do dia a dia
+- **2.1** Listar e-mails novos da caixa de entrada "real" (a principal, não a de fornecedores), ordenados do mais recente para o mais antigo.
+- **2.2** Conferir reuniões agendadas e horários do dia (Outlook Calendar).
+- **2.3** Indicador de tempo restante até o vencimento de cada processo de cotação em andamento (semáforo de prazo).
+
+### Bloco 3 — Sugestões adicionais
+Ver seção 8.
+
+## 2. Premissas que precisam ser validadas com o usuário
+
+Estas são decisões de negócio que impactam a implementação e que assumo como hipótese razoável até confirmação:
+
+| Ponto em aberto | Hipótese assumida |
+|---|---|
+| Onde ficam armazenadas as pastas Obra/Processo/Fornecedor | Localmente em uma pasta base, com opção futura de sincronizar com OneDrive/SharePoint |
+| Como o sistema sabe qual Obra/Processo corresponde a um processo de cotação enviado | Mantendo uma tabela de referência ("Processos") com código do processo, obra, fornecedores convidados e prazo — alimentada quando o usuário envia a cotação |
+| Como casar a resposta do fornecedor com o processo original | Pelo thread do e-mail (`In-Reply-To`/`References`) e/ou pelo código do processo citado no corpo/assunto |
+| O padrão `SUP.AAAA-NNN` é fixo ou varia por fornecedor | Regex configurável (lista de padrões), não fixo no código |
+| Reprocessar e-mails já varridos | Não — controle de estado por `message-id` processado, evitando duplicidade |
+
+Essas hipóteses devem ser confirmadas no início da Fase 0, pois mudam o desenho do banco de dados e das regras de negócio.
+
+## 3. Escolha de tecnologia
+
+**Requisito central:** integração robusta com Outlook (e-mail + calendário), leitura de anexos em múltiplos formatos, varredura em lote, execução periódica/agendada e um painel simples.
+
+**Integração com Outlook:** usar a **Microsoft Graph API** (não IMAP/EWS legado) — é a API oficial e suportada, dá acesso a mensagens, pastas, anexos, calendário e OneDrive/SharePoint com o mesmo modelo de autenticação (OAuth2 via Azure AD App Registration).
+
+**Linguagem/stack recomendada: Python 3.11+**
+- Parsing de documentos e OCR têm o ecossistema mais maduro em Python: `pdfplumber`/`PyPDF2` (PDF), `python-docx` (Word), `openpyxl` (Excel), `pytesseract` + `Pillow` (OCR de imagens/PDF escaneado).
+- `msal` (autenticação OAuth2/Azure AD) + `httpx`/`requests` ou a lib `O365` como wrapper de mais alto nível para Graph API.
+- `APScheduler` para rodar a varredura periodicamente (ou Task Scheduler do Windows/cron chamando um script).
+- `SQLite` + `SQLAlchemy` para persistir estado (e-mails processados, tabela de processos, prazos) — leve, sem servidor de banco separado.
+- `FastAPI` para expor uma API local e servir o painel (dashboard), com frontend simples em Jinja2/HTML no MVP, podendo evoluir para React se necessário.
+
+**Alternativa mais rápida para o MVP do painel:** `Streamlit` no lugar de FastAPI+Jinja2 — menos flexível visualmente, mas reduz o tempo para ter uma tela funcional exibindo e-mails novos, reuniões e prazos.
+
+**Alternativa sem código (mencionar, não recomendar como principal):** Power Automate consegue mover e-mails com regras simples, mas não resolve bem extração de texto de anexos variados (OCR, tabelas dentro de PDF) nem a varredura histórica completa com deduplicação — por isso Python com Graph API é a escolha principal.
+
+## 4. Arquitetura (visão geral)
+
+```
+[Agendador] --> [Conector Graph API] --> [Detector de Proposta] --> [Extrator de Anexo/OCR]
+                                                                        |
+                                                                        v
+                                                            [Classificador Obra/Processo/Fornecedor]
+                                                                        |
+                                                                        v
+                                                            [Gerenciador de Armazenamento (pastas)]
+                                                                        |
+                                                                        v
+                                                                [Banco de estado (SQLite)]
+                                                                        |
+                                                                        v
+                                                              [Notificador] + [Painel/Dashboard]
+```
+
+Componentes:
+1. **Auth (MSAL)** — login OAuth2, refresh de token.
+2. **Conector Graph** — lista mensagens/pastas/calendário, baixa anexos, usa paginação e delta query.
+3. **Detector de Proposta** — regex configurável para o código (`SUP\.\d{4}-\d{3}` e variações).
+4. **Extrator de Anexo** — roteia por tipo de arquivo; usa OCR como fallback quando não há texto extraível.
+5. **Classificador** — resolve Obra/Processo/Fornecedor usando a tabela de referência e o thread do e-mail.
+6. **Gerenciador de Armazenamento** — cria a árvore de pastas, evita duplicidade (hash do arquivo + message-id).
+7. **Banco de estado (SQLite)** — mensagens já processadas, processos e prazos, fornecedores.
+8. **Notificador** — resumo ao final da varredura (notificação no sistema, e-mail ou Teams).
+9. **Painel** — e-mails novos, reuniões do dia, prazos em risco.
+
+## 5. Roadmap por fases (com testes em cada uma)
+
+### Fase 0 — Descoberta e setup (1–2 dias)
+- Validar as premissas da seção 2 com o usuário.
+- Registrar o app no Azure AD (App Registration), definir permissões delegadas mínimas: `Mail.Read`, `Calendars.Read` (e `Files.ReadWrite` só se decidir usar OneDrive).
+- Estrutura inicial do projeto, ambiente virtual, dependências.
+- **Teste:** autenticação OAuth (fluxo device code) e smoke test listando os 5 últimos e-mails.
+
+### Fase 1 — Conector Outlook (leitura)
+- Autenticação MSAL, listagem/paginação de mensagens (`/me/messages`, `/me/mailFolders`), leitura de anexos.
+- **Testes:** unitários com respostas mockadas do Graph API; teste manual contra a caixa real verificando paginação (limite de página do Graph) e `@odata.nextLink`.
+- **Erros a tratar:** token expirado, rate limit 429 (respeitar `Retry-After`), mensagens sem anexo, anexos inline vs. regulares, múltiplas subpastas (Inbox, Arquivo Morto, etc.).
+
+### Fase 2 — Motor de identificação de propostas
+- Regex configurável para o código da proposta; busca no assunto, corpo e nome/texto do anexo.
+- Extração de texto por tipo de arquivo, com OCR como fallback.
+- **Testes:** casos com a proposta de exemplo fornecida pelo usuário, variações de formatação do código (com/sem ponto, espaços), PDF escaneado exigindo OCR, anexo protegido por senha (deve falhar de forma controlada e registrar o erro, não travar a varredura), anexo corrompido.
+- **Riscos:** falso positivo (código citado em contexto que não é proposta), múltiplos códigos no mesmo e-mail.
+
+### Fase 3 — Classificação e armazenamento
+- Resolver Obra/Processo/Fornecedor via tabela de referência + thread do e-mail.
+- Criar a árvore de pastas e salvar o anexo original + metadados (JSON com remetente, data, código, processo).
+- Deduplicação por hash de arquivo + message-id.
+- **Testes:** árvore de pastas criada corretamente; idempotência (rodar a varredura duas vezes não duplica); comportamento em caso de proposta revisada (substituir vs. versionar — decidir com o usuário).
+
+### Fase 4 — Notificação de fim de varredura
+- Relatório final: quantidade de propostas novas, processos atualizados, erros encontrados.
+- Canal de notificação (notificação do sistema, e-mail-resumo ou Teams).
+- **Teste:** rodar varredura sem novidades vs. com novidades, garantir que a mensagem reflete corretamente cada caso.
+
+### Fase 5 — Painel de tarefas
+- E-mails novos da caixa principal (via delta query do Graph, mais eficiente que listar tudo de novo).
+- Reuniões do dia (`/me/calendarView`), com atenção a fuso horário.
+- Indicador de prazo (dias restantes por processo em aberto), com destaque visual (verde/amarelo/vermelho).
+- **Testes:** delta query após reinício do app não perde nem duplica e-mails; horários de reunião corretos considerando fuso horário; cálculo de prazo em dias corridos vs. úteis (confirmar qual faz sentido para o usuário).
+
+### Fase 6 — Hardening e testes finais
+- Logging estruturado com rotação de arquivo.
+- Tratamento de erro em cada etapa (rede, parsing, escrita em disco) sem interromper a varredura inteira por causa de um item problemático.
+- Segurança: token/credenciais nunca em texto puro (usar `keyring` local ou variável de ambiente), permissões mínimas necessárias no App Registration.
+- Teste end-to-end com a caixa real do usuário (ambiente piloto).
+
+### Fase 7 — Entrega e acompanhamento
+- Piloto de 1–2 semanas, ajuste de regex/regras de classificação com base em casos reais que falharem.
+- Documentação de uso (README) e forma de execução (agendada via Task Scheduler/cron, ou app residente na bandeja do sistema).
+
+## 6. Estratégia geral de testes
+
+- **Unitários:** parsing de regex do código de proposta, extração de texto por tipo de arquivo, cálculo de prazo.
+- **Integração com mocks:** respostas gravadas da Graph API para não depender de rede/caixa real em CI.
+- **Integração real (ambiente piloto):** rodar contra a caixa do usuário em modo leitura, sem mover/apagar nada, validando os resultados antes de habilitar qualquer ação automática (como mover e-mails ou criar pastas de fato).
+- **Regressão:** conjunto de e-mails/anexos de exemplo (incluindo o modelo já enviado pelo usuário) versionado como fixture de teste, para garantir que mudanças futuras não quebrem a detecção.
+
+## 7. Riscos e como mitigar
+
+| Risco | Mitigação |
+|---|---|
+| Throttling da Graph API em varredura completa de caixa grande | Paginação + backoff exponencial + processamento incremental (delta query) |
+| Proposta em anexo sem texto extraível (imagem/scan de baixa qualidade) | OCR como fallback + fila de "revisão manual" para itens não identificados automaticamente |
+| Ambiguidade entre Obra/Processo/Fornecedor quando o e-mail não segue o padrão esperado | Marcar como "não classificado" e listar no painel para o usuário resolver manualmente, em vez de arquivar errado |
+| Perda de acesso/token expirado durante execução agendada | Refresh automático de token + alerta se a reautenticação manual for necessária |
+| Duplicação de arquivos entre execuções | Controle de estado por message-id + hash do conteúdo |
+
+## 8. Sugestões adicionais (Bloco 3)
+
+- **Mapa comparativo automático:** quando 2+ fornecedores responderem ao mesmo processo, montar automaticamente uma planilha comparando os valores extraídos das propostas.
+- **Cobrança automática de fornecedores:** alertar (e sugerir e-mail de cobrança) quando um processo está perto do prazo e algum fornecedor convidado ainda não respondeu.
+- **Busca full-text** no acervo de propostas já arquivadas.
+- **KPIs de fornecedores:** tempo médio de resposta, taxa de resposta por fornecedor, histórico de preços.
+- **Rascunho assistido de resposta** para e-mails novos da caixa principal.
+- **Priorização de e-mails novos** (ex.: sinalizar e-mails de clientes/obras críticas primeiro).
+- **Integração com Teams/WhatsApp** para notificações fora do horário em que o app estiver aberto.
+
+## 9. Próximos passos imediatos
+
+1. Confirmar com o usuário as premissas da seção 2 (principalmente: onde ficam as pastas e como a tabela de Processos é alimentada).
+2. Registrar o App no Azure AD e obter as credenciais (client_id, tenant_id).
+3. Implementar a Fase 0 e 1 (autenticação + leitura básica) como primeiro entregável testável.
