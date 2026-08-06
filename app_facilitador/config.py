@@ -22,3 +22,11 @@ GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 # política de TI e não há cache local legível do novo Outlook).
 OWA_URL = "https://outlook.office.com/mail/"
 BROWSER_STATE_PATH = BASE_DIR / ".browser_state.json"
+
+# Padrões de regex para o código do processo de cotação (ex.: SUP.2026-197).
+# Lista configurável (ver PLANEJAMENTO.md, seção 3) em vez de um formato
+# fixo, pois a formatação varia conforme o fornecedor cita o código na
+# resposta (com/sem ponto, com/sem hífen, com/sem espaço).
+PROPOSAL_CODE_PATTERNS = [
+    r"SUP\.?\s*(?P<year>\d{4})\s*-?\s*(?P<seq>\d{3})",
+]
