@@ -1,0 +1,147 @@
+"""Arquivamento das propostas: onde cada arquivo vai parar e com que nome.
+
+O que se testa aqui é decisão, não download: quem é o fornecedor, que
+arquivo vale a pena guardar, e como não sobrescrever uma proposta ao
+receber a revisão dela.
+"""
+
+import pytest
+
+from app_facilitador import attachments
+
+
+class TestQueArquivoVale:
+    """Uma proposta é um documento — logotipo de assinatura não é."""
+
+    @pytest.mark.parametrize(
+        "nome",
+        [
+            "Proposta SUP.2026-197.pdf",
+            "orcamento.xlsx",
+            "planilha.XLSM",
+            "documentos.zip",
+            "projeto.dwg",
+            "carta.docx",
+        ],
+    )
+    def test_documentos_sao_guardados(self, nome):
+        assert attachments.is_document(nome)
+
+    @pytest.mark.parametrize(
+        "nome",
+        [
+            "logo.png",
+            "assinatura.jpg",
+            "image001.gif",
+            "rodape.jpeg",
+            "icone.svg",
+            "",
+            "sem-extensao",
+        ],
+    )
+    def test_enfeite_de_email_e_ignorado(self, nome):
+        """Baixar todo logotipo encheria as pastas de lixo."""
+        assert not attachments.is_document(nome)
+
+
+class TestQuemEOFornecedor:
+    def test_usa_o_dominio_e_nao_o_nome_de_quem_escreveu(self):
+        """No mês seguinte pode ser outra pessoa da mesma empresa."""
+        assert (
+            attachments.supplier_folder("Marcos Ribeiro", "comercial@aciotubos.com.br")
+            == "Aciotubos"
+        )
+        assert (
+            attachments.supplier_folder("Fernanda Lima", "vendas@aciotubos.com.br")
+            == "Aciotubos"
+        )
+
+    def test_ignora_subdominios_e_sufixos(self):
+        assert (
+            attachments.supplier_folder(None, "x@comercial.hidraumax.ind.br")
+            == "Hidraumax"
+        )
+
+    def test_email_pessoal_cai_no_nome_do_remetente(self):
+        """gmail.com não identifica empresa nenhuma."""
+        assert (
+            attachments.supplier_folder("Serralheria do João", "joao123@gmail.com")
+            == "Serralheria do João"
+        )
+
+    def test_sem_remetente_nenhum_ainda_devolve_uma_pasta(self):
+        assert attachments.supplier_folder(None, None) == "Fornecedor"
+
+
+class TestNomesQueOWindowsAceita:
+    def test_troca_caracteres_proibidos(self):
+        assert attachments.sanitize('Obra: Lote 4/5 "Sul"') == "Obra- Lote 4-5 -Sul-"
+
+    def test_remove_ponto_e_espaco_do_fim(self):
+        """O Windows apaga esses em silêncio, e o caminho gravado deixa de
+        ser o que o app pensa que gravou."""
+        assert attachments.sanitize("Fornecedor Ltda. ") == "Fornecedor Ltda"
+
+    def test_escapa_nome_reservado_pelo_windows(self):
+        """Uma pasta chamada CON não pode ser criada."""
+        assert attachments.sanitize("CON") == "CON-"
+        assert attachments.sanitize("com1") == "com1-"
+
+    def test_encurta_nome_gigante(self):
+        resultado = attachments.sanitize("A" * 200)
+
+        assert len(resultado) <= 60
+
+    def test_texto_vazio_vira_o_reserva(self):
+        assert attachments.sanitize("   ") == "sem-nome"
+        assert attachments.sanitize("///") == "sem-nome"
+
+    def test_a_extensao_do_arquivo_e_preservada(self):
+        """É o que faz o Windows abrir o PDF no leitor certo."""
+        assert (
+            attachments.file_name_for("Proposta: revisão 2.pdf")
+            == "Proposta- revisão 2.pdf"
+        )
+
+    def test_arquivo_sem_nome_util_ainda_abre(self):
+        assert attachments.file_name_for(".pdf") == "proposta.pdf"
+
+
+class TestArvoreDePastas:
+    def test_obra_processo_fornecedor(self, tmp_path):
+        destino = attachments.proposal_dir(
+            tmp_path, "Sabesp Lote 4", "SUP.2026-197", "Aciotubos"
+        )
+
+        assert destino == tmp_path / "Sabesp Lote 4" / "SUP.2026-197" / "Aciotubos"
+
+    def test_processo_sem_obra_ainda_tem_onde_ficar(self, tmp_path):
+        """Descartar o arquivo ou jogá-lo na raiz seria pior."""
+        destino = attachments.proposal_dir(tmp_path, None, "SUP.2026-197", "Aciotubos")
+
+        assert destino == tmp_path / "Sem obra" / "SUP.2026-197" / "Aciotubos"
+
+
+class TestPropostaRevisada:
+    def test_nao_sobrescreve_a_anterior(self, tmp_path):
+        """Comparar a revisão com a original é parte do trabalho de cotar."""
+        original = tmp_path / "Proposta.pdf"
+        original.write_text("primeira versão")
+
+        destino = attachments.unique_path(original)
+
+        assert destino == tmp_path / "Proposta (2).pdf"
+        assert original.read_text() == "primeira versão"
+
+    def test_numera_a_partir_da_segunda_versao(self, tmp_path):
+        (tmp_path / "Proposta.pdf").write_text("v1")
+        (tmp_path / "Proposta (2).pdf").write_text("v2")
+
+        assert attachments.unique_path(tmp_path / "Proposta.pdf") == (
+            tmp_path / "Proposta (3).pdf"
+        )
+
+    def test_caminho_livre_e_devolvido_como_veio(self, tmp_path):
+        destino = tmp_path / "Proposta.pdf"
+
+        assert attachments.unique_path(destino) == destino

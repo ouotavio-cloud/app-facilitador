@@ -207,11 +207,19 @@
     <h2>Propostas identificadas</h2>
   </div>
 
+  <form method="post" action="{{ url_for('set_proposals_dir') }}" class="linha-form">
+    <label style="flex: 1; min-width: 20rem">
+      Pasta onde as propostas são arquivadas
+      <input type="text" name="pasta" value="{{ pasta_propostas }}">
+    </label>
+    <button type="submit" class="botao-secundario">Salvar pasta</button>
+  </form>
+
   {% if proposals %}
   <div class="rolagem-lateral">
     <table>
       <thead>
-        <tr><th>Processo</th><th>Fornecedor</th><th>Assunto</th><th>Recebido</th></tr>
+        <tr><th>Processo</th><th>Fornecedor</th><th>Assunto</th><th>Arquivo baixado</th><th>Recebido</th></tr>
       </thead>
       <tbody>
         {% for m in proposals %}
@@ -241,6 +249,22 @@
             {{ m.subject }}
             {% if m.has_attachments %}<span class="selo selo-anexo">anexo</span>{% endif %}
           </td>
+          <td>
+            {% for arquivo in m.arquivos %}
+            <div class="linha-codigo">
+              {% if arquivo.error %}
+              <span class="selo selo-vencido">falhou</span>
+              {% else %}
+              <span class="selo selo-ok">baixado</span>
+              {% endif %}
+              <span class="dica" title="{{ arquivo.path or arquivo.error }}">{{ arquivo.filename }}</span>
+            </div>
+            {% else %}
+            <span class="dica">
+              {%- if m.has_attachments %}ainda não baixado{% else %}sem anexo{% endif -%}
+            </span>
+            {% endfor %}
+          </td>
           <td class="horario">{{ m.received_at_raw or '—' }}</td>
         </tr>
         {% endfor %}
@@ -259,8 +283,17 @@
     e-mails mas não estão na sua lista de processos — clique em
     <em>cadastrar</em> se forem seus.
     <br>
-    A busca cobre hoje o <strong>assunto e o preview</strong> que aparecem na
-    lista. Se o código estiver apenas dentro do anexo, ainda não é encontrado.
+    Os arquivos são arquivados em <strong>Obra / Processo / Fornecedor</strong>.
+    O fornecedor sai do domínio do e-mail, para que propostas da mesma empresa
+    fiquem juntas mesmo quando quem responde muda. Proposta revisada
+    <strong>não substitui</strong> a anterior: vira "(2)" ao lado dela.
+    <br>
+    Para pegar o anexo o app precisa <strong>abrir o e-mail</strong>, o que o
+    marca como lido no Outlook — só e-mails de processos que você cadastrou são
+    abertos.
+    <br>
+    A busca pelo código cobre o <strong>assunto e o preview</strong>. Se o código
+    estiver apenas dentro do PDF, o e-mail ainda não é reconhecido.
   </p>
 </section>
 

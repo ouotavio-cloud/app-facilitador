@@ -37,16 +37,26 @@ Cada processo é procurado **das duas formas** — pelo código e pelo nome da o
 
 **Propostas identificadas** — os e-mails ligados aos seus processos, indicando por qual pista cada um foi reconhecido. Códigos que apareceram nos e-mails mas não estão cadastrados aparecem marcados, com um botão para cadastrar na hora — assim uma cotação esquecida vira pendência visível em vez de sumir.
 
+**Download das propostas** — quando um e-mail casa com um processo cadastrado, o app abre a mensagem, baixa os anexos que são documentos e os arquiva em:
+
+```
+<pasta escolhida>/ Obra / Processo / Fornecedor / arquivo
+```
+
+O **fornecedor** vem do domínio do e-mail (`comercial@aciotubos.com.br` → `Aciotubos`), não do nome de quem escreveu: no mês seguinte pode ser outra pessoa da mesma empresa respondendo, e as propostas precisam ficar juntas. Em e-mail pessoal (gmail e afins) o domínio não diz nada, e aí vale o nome do remetente.
+
+Logotipos e assinaturas não são baixados — só documentos (`.pdf`, `.xlsx`, `.docx`, `.dwg`, `.zip`…). Proposta revisada **não sobrescreve** a anterior: vira `Orçamento (2).pdf` ao lado da original, porque comparar as duas versões é parte do trabalho.
+
+Duas coisas a saber: para pegar o anexo o app precisa **abrir o e-mail**, o que o marca como lido no Outlook — por isso só e-mails de processos cadastrados são abertos, nunca a caixa inteira. E a pasta de destino é editável no painel; o padrão é `Documentos\App Facilitador\Propostas`, que em máquina corporativa costuma estar sincronizada com o OneDrive.
+
 **Reuniões de hoje** — lê os compromissos do calendário. Clique em *atualizar* para consultar; o resultado fica em cache para o painel abrir rápido. Se o cache for de outro dia, o app avisa em vez de mostrar reuniões de ontem como se fossem de hoje.
 
 **E-mails recentes** — os últimos e-mails registrados, filtráveis por pasta.
 
 ## Limitações atuais
 
-Duas coisas do escopo original ainda não estão prontas:
-
-- **A busca cobre assunto e preview**, que é o que a lista de e-mails expõe. Se o código do processo estiver apenas dentro do anexo, ainda não é encontrado — abrir cada mensagem e ler os anexos é o próximo passo.
-- **Não há arquivamento em pastas** `Obra / Processo / Fornecedor / Proposta`. Falta decidir onde essas pastas devem ficar.
+- **A busca pelo código cobre assunto e preview**, que é o que a lista de e-mails expõe. Se o código do processo estiver apenas dentro do PDF, o e-mail não é reconhecido como proposta e o anexo não é baixado. Ler o corpo completo e o conteúdo dos anexos é o próximo passo.
+- **O botão de download depende do layout do Outlook Web.** O app tenta duas formas de acionar (botão que aparece ao passar o mouse, e o menu de mais ações). Se a Microsoft mudar a interface, é aqui que quebra primeiro — `dump_message_debug` em `browser_client.py` salva o HTML real do painel de leitura para recalibrar.
 
 ## Por que ler a tela do Outlook, e não uma API
 

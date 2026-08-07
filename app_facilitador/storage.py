@@ -56,6 +56,29 @@ CREATE TABLE IF NOT EXISTS processes (
     deadline TEXT,
     created_at TEXT NOT NULL
 );
+
+-- Arquivos de proposta já baixados. Guardar o caminho, e não só o nome,
+-- permite ao painel abrir a pasta certa e permite saber o que já foi
+-- baixado — sem isso cada varredura baixaria tudo de novo.
+CREATE TABLE IF NOT EXISTS attachments (
+    conv_id TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    path TEXT,
+    code TEXT,
+    supplier TEXT,
+    downloaded_at TEXT NOT NULL,
+    error TEXT,
+    PRIMARY KEY (conv_id, filename),
+    FOREIGN KEY (conv_id) REFERENCES messages(conv_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attachments_code ON attachments(code);
+
+-- Preferências do usuário (hoje: onde as propostas são arquivadas).
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 # Colunas acrescentadas depois da primeira versão do schema. Um CREATE
@@ -266,3 +289,97 @@ def list_messages_with_codes(connection: sqlite3.Connection) -> list[dict]:
         }
         for row in rows
     ]
+
+
+def set_setting(connection: sqlite3.Connection, key: str, value: str | None) -> None:
+    """Grava uma preferência do usuário."""
+    connection.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+
+
+def get_setting(
+    connection: sqlite3.Connection, key: str, default: str | None = None
+) -> str | None:
+    row = connection.execute(
+        "SELECT value FROM settings WHERE key = ?", (key,)
+    ).fetchone()
+    if row is None or row["value"] is None:
+        return default
+    return row["value"]
+
+
+def record_attachment(
+    connection: sqlite3.Connection,
+    conv_id: str,
+    filename: str,
+    path: str | None,
+    code: str | None,
+    supplier: str | None,
+    error: str | None = None,
+) -> None:
+    """Registra um anexo baixado — ou a falha ao baixá-lo.
+
+    Guardar também o que falhou é o que permite ao painel mostrar "esta
+    proposta não veio", em vez de o arquivo simplesmente não existir e
+    ninguém notar.
+    """
+    connection.execute(
+        """
+        INSERT INTO attachments
+            (conv_id, filename, path, code, supplier, downloaded_at, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(conv_id, filename) DO UPDATE SET
+            path = excluded.path,
+            code = excluded.code,
+            supplier = excluded.supplier,
+            downloaded_at = excluded.downloaded_at,
+            error = excluded.error
+        """,
+        (
+            conv_id,
+            filename,
+            path,
+            code,
+            supplier,
+            datetime.now().isoformat(timespec="seconds"),
+            error,
+        ),
+    )
+
+
+def downloaded_conversations(connection: sqlite3.Connection) -> set[str]:
+    """Conversas cujos anexos já foram baixados com sucesso.
+
+    Serve para a varredura não abrir de novo um e-mail já processado —
+    abrir custa segundos e marca a mensagem como lida no Outlook.
+    """
+    rows = connection.execute(
+        "SELECT DISTINCT conv_id FROM attachments WHERE error IS NULL"
+    ).fetchall()
+    return {row["conv_id"] for row in rows}
+
+
+def list_attachments(connection: sqlite3.Connection) -> list[dict]:
+    """Propostas baixadas, das mais recentes para as mais antigas."""
+    rows = connection.execute(
+        """
+        SELECT a.conv_id, a.filename, a.path, a.code, a.supplier,
+               a.downloaded_at, a.error,
+               m.sender_name, m.sender_email, m.subject, m.received_at_raw
+        FROM attachments a
+        LEFT JOIN messages m ON m.conv_id = a.conv_id
+        ORDER BY a.downloaded_at DESC
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def attachments_by_conversation(connection: sqlite3.Connection) -> dict[str, list[dict]]:
+    """Anexos agrupados por conversa, para a tabela de propostas."""
+    agrupados: dict[str, list[dict]] = {}
+    for anexo in list_attachments(connection):
+        agrupados.setdefault(anexo["conv_id"], []).append(anexo)
+    return agrupados

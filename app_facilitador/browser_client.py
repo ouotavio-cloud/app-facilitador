@@ -6,6 +6,7 @@ seção 2). O usuário loga manualmente uma vez; a sessão fica salva
 localmente para reaproveitar nas próximas execuções.
 """
 
+import re
 import time
 from collections.abc import Callable, Iterator
 from datetime import datetime
@@ -481,6 +482,167 @@ def scan_inbox(
             stagnant_rounds += 1
 
         page.wait_for_timeout(_SCROLL_SETTLE_MS)
+
+
+# Quanto esperar o e-mail abrir no painel de leitura.
+_MESSAGE_OPEN_TIMEOUT_MS = 20_000
+
+# Quanto esperar o arquivo terminar de baixar. Proposta com projeto
+# costuma ser pesada, e a rede da obra nem sempre ajuda.
+_DOWNLOAD_TIMEOUT_MS = 120_000
+
+# Localiza os anexos pelo nome do arquivo, e não por classe de CSS.
+#
+# Toda a leitura do Outlook aqui depende de classes geradas pelo build da
+# Microsoft, que mudam sem aviso. Para anexos dá para fazer melhor: um
+# anexo é um elemento cujo rótulo termina em ".pdf", ".xlsx" e afins. Isso
+# sobrevive a mudança de layout, porque descreve o conteúdo e não a
+# aparência.
+_JS_FIND_ATTACHMENTS = """
+extensoes => {
+    const vistos = new Set();
+    const achados = [];
+
+    for (const el of document.querySelectorAll('[aria-label], [title]')) {
+        const rotulo = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+        if (!rotulo) continue;
+
+        // O rótulo pode ser "Proposta.pdf" ou "Anexo Proposta.pdf, 240 KB".
+        const casou = rotulo.match(/([^\\\\/:*?"<>|\\s][^\\\\/:*?"<>|]*\\.[A-Za-z0-9]{2,5})(?=$|[,;\\s])/);
+        if (!casou) continue;
+
+        const arquivo = casou[1].trim();
+        const extensao = arquivo.slice(arquivo.lastIndexOf('.')).toLowerCase();
+        if (!extensoes.includes(extensao)) continue;
+
+        // Um mesmo anexo aparece em elementos aninhados (o cartão e o
+        // botão dentro dele); ficamos com o mais interno, que é onde o
+        // clique costuma funcionar.
+        if (vistos.has(arquivo)) continue;
+        vistos.add(arquivo);
+
+        el.setAttribute('data-facilitador-anexo', arquivo);
+        achados.push(arquivo);
+    }
+
+    return achados;
+}
+"""
+
+
+def open_message(page: Page, conv_id: str) -> bool:
+    """Abre um e-mail no painel de leitura. False se a linha sumiu da tela.
+
+    Só funciona enquanto a conversa está renderizada — a lista é
+    virtualizada, então isto precisa acontecer logo depois de ela ter sido
+    lida, não numa segunda passada.
+
+    Abrir marca o e-mail como lido no Outlook. É um efeito colateral real
+    na caixa do usuário, e por isso só e-mails já identificados como
+    proposta são abertos, nunca a caixa inteira.
+    """
+    linha = page.locator(f'[data-convid="{conv_id}"]').first
+    if linha.count() == 0:
+        return False
+
+    try:
+        linha.click(timeout=_MESSAGE_OPEN_TIMEOUT_MS)
+    except Exception:  # noqa: BLE001 - linha descartada pela virtualização
+        return False
+
+    # O painel de leitura monta em etapas; sem esta pausa a busca por
+    # anexos acontece antes de eles existirem.
+    page.wait_for_timeout(2_000)
+    return True
+
+
+def find_attachments(page: Page, extensions: list[str]) -> list[str]:
+    """Nomes dos arquivos anexados visíveis no e-mail aberto.
+
+    Marca cada elemento encontrado com `data-facilitador-anexo` para que o
+    download consiga voltar nele depois sem repetir a busca.
+    """
+    return page.evaluate(_JS_FIND_ATTACHMENTS, extensions)
+
+
+def download_attachment(page: Page, filename: str, destino) -> bool:
+    """Baixa um anexo já localizado por `find_attachments`.
+
+    O Outlook não expõe um botão de download estável: dependendo do tipo
+    de arquivo e do tamanho da janela, ele aparece ao passar o mouse, ou
+    fica escondido num menu "mais ações". Tentamos as duas formas, do
+    caminho mais curto para o mais longo.
+    """
+    alvo = page.locator(f'[data-facilitador-anexo="{filename}"]').first
+    if alvo.count() == 0:
+        return False
+
+    try:
+        alvo.scroll_into_view_if_needed(timeout=5_000)
+        alvo.hover(timeout=5_000)
+    except Exception:  # noqa: BLE001 - o anexo pode não aceitar hover
+        pass
+
+    for tentativa in (_baixar_pelo_botao, _baixar_pelo_menu):
+        try:
+            with page.expect_download(timeout=_DOWNLOAD_TIMEOUT_MS) as download:
+                if not tentativa(page, alvo):
+                    continue
+            download.value.save_as(str(destino))
+            return True
+        except Exception:  # noqa: BLE001 - tenta a próxima forma
+            continue
+
+    return False
+
+
+def _baixar_pelo_botao(page: Page, alvo) -> bool:
+    """Botão de download que aparece sobre o anexo ao passar o mouse."""
+    botao = page.locator(
+        '[aria-label*="Baixar" i], [aria-label*="Download" i], '
+        '[title*="Baixar" i], [title*="Download" i]'
+    ).first
+    if botao.count() == 0:
+        return False
+    botao.click(timeout=5_000)
+    return True
+
+
+def _baixar_pelo_menu(page: Page, alvo) -> bool:
+    """Item "Baixar" dentro do menu de mais ações do anexo."""
+    menu = page.locator(
+        '[aria-label*="mais ações" i], [aria-label*="more actions" i], '
+        '[aria-label*="Mais opções" i]'
+    ).first
+    if menu.count() == 0:
+        return False
+    menu.click(timeout=5_000)
+
+    item = page.get_by_role("menuitem").filter(has_text=re.compile("baixar|download", re.I)).first
+    if item.count() == 0:
+        return False
+    item.click(timeout=5_000)
+    return True
+
+
+def dump_message_debug(page: Page, destino) -> None:
+    """Salva o HTML do painel de leitura, para calibrar a busca de anexos.
+
+    A leitura de anexos depende da estrutura da página, que a Microsoft
+    muda sem aviso. Quando parar de funcionar, é este arquivo que mostra a
+    estrutura nova.
+    """
+    html = page.evaluate(
+        """
+        () => {
+            const painel = document.querySelector('[role="main"]')
+                || document.querySelector('[role="document"]')
+                || document.body;
+            return painel.outerHTML;
+        }
+        """
+    )
+    destino.write_text(html, encoding="utf-8")
 
 
 class _BrowserSession:

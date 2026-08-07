@@ -7,8 +7,14 @@ resumo do que foi encontrado (PLANEJAMENTO.md, Fase 4).
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from app_facilitador import browser_client, inbox_parser, proposal_detector, storage
+from app_facilitador import attachments, browser_client, config, inbox_parser
+from app_facilitador import proposal_detector, storage
+
+# Extensões procuradas nos anexos, na forma que o JavaScript da busca
+# espera. Vem de `attachments` para não haver duas listas divergindo.
+_EXTENSIONS = attachments.DOCUMENT_EXTENSIONS
 
 # Nome gravado para os e-mails varridos sem pasta explícita — o Outlook
 # abre na Caixa de Entrada. Guardar o nome, em vez de deixar nulo, permite
@@ -28,6 +34,8 @@ class ScanResult:
     errors: list[str] = field(default_factory=list)
     folder: str | None = None
     processes_tracked: int = 0
+    downloaded: int = 0
+    download_failures: int = 0
 
     def summary_lines(self) -> list[str]:
         lines = [
@@ -36,7 +44,10 @@ class ScanResult:
             f"E-mails percorridos: {self.scanned}",
             f"Novos (ainda não registrados): {self.new_messages}",
             f"Com processo identificado: {self.messages_with_codes}",
+            f"Propostas baixadas: {self.downloaded}",
         ]
+        if self.download_failures:
+            lines.append(f"Anexos que não deu para baixar: {self.download_failures}")
         if self.codes_found:
             lines.append("Processos encontrados:")
             for code, count in sorted(self.codes_found.items()):
@@ -58,6 +69,7 @@ def scan(
     headless: bool = False,
     folder: str | None = None,
     on_progress: Callable[[int], None] | None = None,
+    download_attachments: bool = True,
 ) -> ScanResult:
     """Percorre uma pasta de e-mail e registra o que encontrar.
 
@@ -69,6 +81,11 @@ def scan(
     para o terminal. Um erro em um item não interrompe a varredura: é
     registrado em `ScanResult.errors` e o processamento segue (Fase 6 —
     um item problemático não pode derrubar a execução inteira).
+
+    `download_attachments` baixa a proposta anexada dos e-mails que casam
+    com um processo cadastrado. Fica ligado por padrão porque é o que o
+    usuário pediu, mas é desligável: baixar exige **abrir** cada e-mail,
+    e abrir o marca como lido no Outlook.
     """
     result = ScanResult(folder=folder)
     last_reported = 0
@@ -88,6 +105,8 @@ def scan(
     with storage.connect() as connection:
         processes = storage.list_processes(connection)
         result.processes_tracked = len(processes)
+        ja_baixados = storage.downloaded_conversations(connection)
+        pasta_propostas = proposals_dir(connection)
 
         with browser_client.open_inbox_session(headless=headless) as page:
             if folder is not None:
@@ -98,11 +117,35 @@ def scan(
             ):
                 result.scanned += 1
                 try:
-                    _process_message(connection, message, processes, result, folder)
+                    matches = _process_message(
+                        connection, message, processes, result, folder
+                    )
                 except Exception as error:  # noqa: BLE001 - um item ruim não pode parar a varredura
                     result.errors.append(f"{message.get('subject', '(sem assunto)')}: {error}")
+                    continue
+
+                if not download_attachments or not matches:
+                    continue
+                if message["conv_id"] in ja_baixados:
+                    continue
+
+                try:
+                    _download_proposal(
+                        page, connection, message, matches, processes,
+                        pasta_propostas, result,
+                    )
+                except Exception as error:  # noqa: BLE001 - idem: não derruba a varredura
+                    result.errors.append(
+                        f"anexo de {message.get('subject', '(sem assunto)')}: {error}"
+                    )
 
     return result
+
+
+def proposals_dir(connection) -> Path:
+    """Pasta escolhida pelo usuário para arquivar as propostas."""
+    escolhida = storage.get_setting(connection, config.PROPOSALS_DIR_SETTING)
+    return Path(escolhida) if escolhida else config.DEFAULT_PROPOSALS_DIR
 
 
 def _process_message(
@@ -111,7 +154,8 @@ def _process_message(
     processes: list[dict],
     result: ScanResult,
     folder: str | None,
-) -> None:
+) -> list[dict]:
+    """Grava a mensagem e devolve os processos cadastrados que ela cita."""
     text = inbox_parser.searchable_text(message)
 
     matches = proposal_detector.match_known_processes(text, processes)
@@ -137,6 +181,74 @@ def _process_message(
 
     for code in unknown:
         result.unknown_codes[code] = result.unknown_codes.get(code, 0) + 1
+
+    return matches
+
+
+def _download_proposal(
+    page,
+    connection,
+    message: dict,
+    matches: list[dict],
+    processes: list[dict],
+    base_dir: Path,
+    result: ScanResult,
+) -> None:
+    """Baixa os anexos de um e-mail identificado como proposta.
+
+    Só e-mails que casam com um processo cadastrado chegam aqui, e por um
+    motivo que não é só desempenho: abrir a mensagem a marca como lida no
+    Outlook do usuário. Abrir a caixa inteira mudaria o estado de milhares
+    de e-mails que não têm nada a ver com cotação.
+    """
+    if not message.get("has_attachments"):
+        return
+
+    codigo = matches[0]["code"]
+    obra = next((p["obra"] for p in processes if p["code"] == codigo), None)
+    fornecedor = attachments.supplier_folder(
+        message.get("sender_name"), message.get("sender_email")
+    )
+
+    if not browser_client.open_message(page, message["conv_id"]):
+        result.errors.append(
+            f"não consegui abrir o e-mail de {message.get('sender_name')} "
+            f"para pegar o anexo"
+        )
+        return
+
+    arquivos = [
+        nome
+        for nome in browser_client.find_attachments(page, sorted(_EXTENSIONS))
+        if attachments.is_document(nome)
+    ]
+
+    if not arquivos:
+        # O e-mail dizia ter anexo, mas nenhum é documento — é assinatura
+        # ou imagem embutida. Não é erro, é o filtro funcionando.
+        return
+
+    destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
+    destino_dir.mkdir(parents=True, exist_ok=True)
+
+    for nome in arquivos:
+        destino = attachments.unique_path(destino_dir / attachments.file_name_for(nome))
+        baixou = browser_client.download_attachment(page, nome, destino)
+
+        storage.record_attachment(
+            connection,
+            conv_id=message["conv_id"],
+            filename=nome,
+            path=str(destino) if baixou else None,
+            code=codigo,
+            supplier=fornecedor,
+            error=None if baixou else "não foi possível baixar pelo Outlook",
+        )
+
+        if baixou:
+            result.downloaded += 1
+        else:
+            result.download_failures += 1
 
 
 def run_and_report(

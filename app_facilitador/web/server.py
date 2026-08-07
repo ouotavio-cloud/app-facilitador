@@ -14,7 +14,7 @@ from datetime import date
 from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 
 from app_facilitador import browser_client, calendar_client, config, deadlines, paths
-from app_facilitador import proposal_detector, storage
+from app_facilitador import proposal_detector, scanner, storage
 from app_facilitador.web.jobs import LoginJob, MeetingsJob, ScanJob
 
 HOST = "127.0.0.1"
@@ -72,6 +72,11 @@ def create_app() -> Flask:
             proposals = storage.list_messages_with_codes(connection)
             scanned_folders = storage.list_scanned_folders(connection)
             total_messages = storage.count_messages(connection)
+            arquivos = storage.attachments_by_conversation(connection)
+            pasta_propostas = scanner.proposals_dir(connection)
+
+        for proposta in proposals:
+            proposta["arquivos"] = arquivos.get(proposta["conv_id"], [])
 
         meetings = calendar_client.cached_meetings()
 
@@ -87,7 +92,24 @@ def create_app() -> Flask:
             meetings=meetings,
             resumo=_daily_summary(processes, proposals, meetings, total_messages),
             data_dir=str(config.BASE_DIR),
+            pasta_propostas=str(pasta_propostas),
+            total_arquivos=sum(len(v) for v in arquivos.values()),
         )
+
+    @app.post("/pasta-propostas")
+    def set_proposals_dir():
+        """Muda onde as propostas são arquivadas.
+
+        Editável porque o melhor lugar depende do usuário: uma pasta local
+        serve para quem trabalha sozinho, e uma pasta sincronizada com o
+        OneDrive faz o time enxergar as propostas junto.
+        """
+        escolhida = (request.form.get("pasta") or "").strip()
+        with storage.connect() as connection:
+            storage.set_setting(
+                connection, config.PROPOSALS_DIR_SETTING, escolhida or None
+            )
+        return redirect(url_for("index"))
 
     @app.post("/processos")
     def add_process():

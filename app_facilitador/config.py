@@ -7,6 +7,8 @@ Command Line Tools", um app oficial da Microsoft presente em qualquer
 tenant, que só exige consentimento comum do próprio usuário.
 """
 
+from pathlib import Path
+
 from app_facilitador import paths
 
 CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
@@ -23,6 +25,19 @@ TOKEN_CACHE_PATH = BASE_DIR / ".token_cache.bin"
 DB_PATH = BASE_DIR / "app_facilitador.db"
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+
+# Onde as propostas baixadas são arquivadas, na árvore
+# `Obra / Processo / Fornecedor / arquivo`.
+#
+# Em Documentos, e não na pasta escondida de dados do app: são arquivos de
+# trabalho, que o usuário vai abrir, anexar em e-mail e mostrar para
+# outras pessoas. Em máquina corporativa a pasta Documentos costuma estar
+# sincronizada com o OneDrive, então o time enxerga junto sem configurar
+# nada. O caminho é editável no painel — este é só o palpite inicial.
+DEFAULT_PROPOSALS_DIR = Path.home() / "Documents" / "App Facilitador" / "Propostas"
+
+# Chave da preferência que guarda a escolha do usuário (tabela settings).
+PROPOSALS_DIR_SETTING = "pasta_propostas"
 
 # Automação do Outlook Web (usada quando a Graph API está bloqueada por
 # política de TI e não há cache local legível do novo Outlook).
