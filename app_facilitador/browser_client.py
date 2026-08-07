@@ -6,6 +6,7 @@ seção 2). O usuário loga manualmente uma vez; a sessão fica salva
 localmente para reaproveitar nas próximas execuções.
 """
 
+import time
 from collections.abc import Callable, Iterator
 
 from playwright.sync_api import Page
@@ -189,6 +190,30 @@ def _login_page_description(page: Page) -> str:
     return url.split("?")[0][:80]
 
 
+# Abaixo disso, a janela sumiu rápido demais para o usuário ter fechado.
+_RODADAS_CEDO_DEMAIS = 5
+
+
+def _mensagem_de_janela_fechada(rodada: int) -> str:
+    """Explica o fechamento conforme quando ele aconteceu.
+
+    Fechar sozinho em segundos não é a mesma coisa que o usuário desistir
+    no meio, e a causa provável é outra: o Edge pode encerrar a janela nova
+    quando já há uma instância dele em execução na máquina.
+    """
+    if rodada < _RODADAS_CEDO_DEMAIS:
+        return (
+            "A janela do navegador fechou sozinha logo depois de abrir, antes "
+            "de dar tempo de logar. Isso costuma acontecer quando o Microsoft "
+            "Edge já está aberto: feche todas as janelas do Edge e clique em "
+            "conectar de novo."
+        )
+    return (
+        "A janela do navegador foi fechada antes do login terminar. "
+        "Clique em conectar de novo."
+    )
+
+
 def login_and_save_session(
     on_status: Callable[[str], None] | None = None,
     should_finish: Callable[[], bool] | None = None,
@@ -232,29 +257,38 @@ def login_and_save_session(
         rodadas = LOGIN_TIMEOUT_MS // LOGIN_POLL_MS
         concluido = False
 
-        for _ in range(rodadas):
+        for rodada in range(rodadas):
             if should_finish is not None and should_finish():
                 concluido = True
                 break
+
+            # A janela fechada é detectada perguntando, e não deduzida de
+            # uma exceção qualquer. O login da Microsoft é uma sequência
+            # de redirecionamentos, e consultar a página no meio de uma
+            # navegação levanta erro ("Execution context was destroyed")
+            # sem que nada de errado tenha acontecido — tratar isso como
+            # janela fechada abortava o login logo no primeiro redirect.
+            if page.is_closed() or not browser.is_connected():
+                raise RuntimeError(_mensagem_de_janela_fechada(rodada))
 
             try:
                 if page.query_selector(seletor) is not None:
                     concluido = True
                     break
                 onde = _login_page_description(page)
-                page.wait_for_timeout(LOGIN_POLL_MS)
-            except Exception as exc:  # noqa: BLE001 - janela fechada pelo usuário
-                browser.close()
-                raise RuntimeError(
-                    "A janela do navegador foi fechada antes do login terminar. "
-                    "Clique em conectar de novo."
-                ) from exc
+            except Exception:  # noqa: BLE001 - navegação em curso; tenta de novo
+                onde = "carregando…"
 
             anunciar(
                 f"Aguardando o login na janela do navegador — ela pode estar "
                 f"atrás desta. Agora em: {onde}. "
                 "Se sua caixa de entrada já apareceu lá, clique em 'Já entrei'."
             )
+
+            # `time.sleep` em vez de `page.wait_for_timeout`: a espera não
+            # precisa tocar no navegador, e assim não há como ela falhar
+            # por causa de uma navegação em andamento.
+            time.sleep(LOGIN_POLL_MS / 1000)
 
         if not concluido:
             browser.close()

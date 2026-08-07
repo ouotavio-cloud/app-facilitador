@@ -14,10 +14,17 @@ from app_facilitador import browser_client, config
 class _FakePage:
     """Página que só vira "caixa de entrada" depois de N verificações."""
 
-    def __init__(self, rodadas_ate_a_caixa=None, url="https://login.microsoftonline.com/x"):
+    def __init__(
+        self,
+        rodadas_ate_a_caixa=None,
+        url="https://login.microsoftonline.com/x",
+        rodadas_navegando=0,
+        fechada=False,
+    ):
         self._restantes = rodadas_ate_a_caixa
+        self._navegando = rodadas_navegando
+        self._fechada = fechada
         self.url = url
-        self.esperas = 0
         self.trazida_para_frente = False
 
     def goto(self, url):
@@ -29,7 +36,15 @@ class _FakePage:
     def bring_to_front(self):
         self.trazida_para_frente = True
 
+    def is_closed(self):
+        return self._fechada
+
     def query_selector(self, selector):
+        if self._navegando > 0:
+            self._navegando -= 1
+            raise RuntimeError(
+                "Execution context was destroyed, most likely because of a navigation"
+            )
         if self._restantes is None:
             return None
         if self._restantes <= 0:
@@ -37,14 +52,6 @@ class _FakePage:
             return object()
         self._restantes -= 1
         return None
-
-    def wait_for_timeout(self, ms):
-        self.esperas += 1
-
-
-class _FakePageFechada(_FakePage):
-    def wait_for_timeout(self, ms):
-        raise RuntimeError("Target page, context or browser has been closed")
 
 
 class _FakeContext:
@@ -60,12 +67,16 @@ class _FakeContext:
 
 
 class _FakeBrowser:
-    def __init__(self, page):
+    def __init__(self, page, conectado=True):
         self.context = _FakeContext(page)
         self.fechado = False
+        self._conectado = conectado
 
     def new_context(self, **kwargs):
         return self.context
+
+    def is_connected(self):
+        return self._conectado
 
     def close(self):
         self.fechado = True
@@ -143,12 +154,62 @@ def test_sem_deteccao_e_sem_confirmacao_o_tempo_esgota(navegador_falso):
     assert browser.context.estado_salvo_em is None
 
 
-def test_janela_fechada_no_meio_vira_erro_explicativo(navegador_falso):
-    page = _FakePageFechada(rodadas_ate_a_caixa=None)
+def test_janela_que_fecha_na_hora_aponta_o_edge_ja_aberto(navegador_falso):
+    """Sumir em segundos não é o usuário desistindo — a causa é outra."""
+    page = _FakePage(rodadas_ate_a_caixa=None, fechada=True)
     navegador_falso["fabricar"](page)
+
+    with pytest.raises(RuntimeError, match="Edge já está aberto"):
+        browser_client.login_and_save_session(on_status=lambda _: None)
+
+
+def test_janela_fechada_depois_de_um_tempo_e_tratada_como_desistencia(
+    navegador_falso, monkeypatch
+):
+    monkeypatch.setattr(browser_client, "LOGIN_TIMEOUT_MS", 20)
+    monkeypatch.setattr(browser_client, "_RODADAS_CEDO_DEMAIS", 2)
+
+    page = _FakePage(rodadas_ate_a_caixa=None)
+    navegador_falso["fabricar"](page)
+
+    # Fecha só depois de algumas rodadas, como quem desistiu no meio.
+    consultas = {"n": 0}
+    original = page.is_closed
+
+    def _fechou_depois():
+        consultas["n"] += 1
+        return consultas["n"] > 4
+
+    page.is_closed = _fechou_depois
+    assert original() is False
 
     with pytest.raises(RuntimeError, match="fechada antes do login terminar"):
         browser_client.login_and_save_session(on_status=lambda _: None)
+
+
+def test_navegador_que_morreu_tambem_e_percebido(navegador_falso):
+    page = _FakePage(rodadas_ate_a_caixa=None)
+    browser = navegador_falso["fabricar"](page)
+    browser._conectado = False
+
+    with pytest.raises(RuntimeError, match="Edge já está aberto"):
+        browser_client.login_and_save_session(on_status=lambda _: None)
+
+
+def test_redirecionamento_do_login_nao_e_confundido_com_janela_fechada(navegador_falso):
+    """O caso que quebrou a v3 na máquina do usuário.
+
+    O login da Microsoft passa por vários redirecionamentos, e consultar a
+    página durante um deles levanta erro sem que nada esteja errado.
+    Tratar isso como "janela fechada" abortava o login no primeiro
+    redirect — antes mesmo de a pessoa digitar a senha.
+    """
+    page = _FakePage(rodadas_ate_a_caixa=1, rodadas_navegando=2)
+    browser = navegador_falso["fabricar"](page)
+
+    browser_client.login_and_save_session(on_status=lambda _: None)
+
+    assert browser.context.estado_salvo_em is not None
 
 
 def test_o_andamento_diz_em_que_pagina_o_navegador_esta(navegador_falso):
