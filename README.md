@@ -2,38 +2,20 @@
 
 App local para acompanhar propostas de fornecedores e organizar as tarefas do dia a partir do Outlook. Roda inteiramente na sua máquina — sem servidor, sem nuvem.
 
-Como a Microsoft Graph API está bloqueada pela política de TI da organização (e o novo Outlook não mantém cache local legível), o app lê o Outlook Web em um navegador controlado localmente, usando o mesmo login que você já faz todo dia. Detalhes e alternativas descartadas em `PLANEJAMENTO.md`, seção 2.
+## Baixar e usar (Windows)
 
-## Instalação (uma vez)
+1. Baixe o **`AppFacilitador.exe`** na [página de releases](../../releases/latest).
+2. Dê dois cliques.
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate        # Linux/Mac: source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
-```
+Não precisa instalar Python, nem rodar `pip`, nem baixar navegador. O app usa o Microsoft Edge que já vem no Windows para ler seu Outlook.
 
-## Login no Outlook (uma vez)
+Na primeira vez, o Windows pode mostrar um aviso azul de **SmartScreen** — o programa não tem assinatura digital paga. Clique em **Mais informações** → **Executar assim mesmo**.
 
-```bash
-python scripts/browser_login.py
-```
-
-Abre uma janela do navegador. Faça login com sua conta Microsoft até ver a caixa de entrada, volte ao terminal e aperte Enter. A sessão fica salva em `.browser_state.json` (local, nunca versionado) e é reaproveitada depois.
-
-> No Windows use o **PowerShell** comum, não o PowerShell ISE — o ISE não repassa o Enter para o script e a espera do login trava.
-
-## Abrir o app
-
-Duplo clique em **`Abrir App Facilitador.bat`**, ou pelo terminal:
-
-```bash
-python app.py
-```
-
-O painel abre no navegador em `http://127.0.0.1:5000`.
+Abre uma janela preta (é o app rodando; feche-a para encerrar) e o painel no navegador. No painel, clique em **Conectar ao Outlook**: abre uma janela para você entrar com sua conta Microsoft, e o app detecta sozinho quando você terminou. Esse acesso fica salvo em `%LOCALAPPDATA%\AppFacilitador` e não precisa ser repetido.
 
 ## O que o painel faz
+
+**Números do dia** — no topo: quantos processos estão vencendo, quantas propostas chegaram, quantos códigos apareceram sem estar cadastrados, quantas reuniões você tem hoje.
 
 **Processos que você acompanha** — cadastre o código de cada cotação (`SUP.AAAA-NNN`), o nome da obra e o prazo. Cada processo mostra um semáforo de vencimento:
 
@@ -63,7 +45,41 @@ Duas coisas do escopo original ainda não estão prontas:
 - **A busca cobre assunto e preview**, que é o que a lista de e-mails expõe. Se o código do processo estiver apenas dentro do anexo, ainda não é encontrado — abrir cada mensagem e ler os anexos é o próximo passo.
 - **Não há arquivamento em pastas** `Obra / Processo / Fornecedor / Proposta`. Falta decidir onde essas pastas devem ficar.
 
-## Uso por linha de comando
+## Por que ler a tela do Outlook, e não uma API
+
+A Microsoft Graph API está bloqueada pela política de TI da organização, e o novo Outlook não mantém cache local legível. O app abre o Outlook Web num navegador controlado localmente, usando o mesmo login que você já faz todo dia. As alternativas descartadas estão em `PLANEJAMENTO.md`, seção 2.
+
+A consequência prática: a leitura depende da estrutura da página, que a Microsoft pode alterar sem aviso. Se parar de funcionar, `scripts/browser_inbox_debug.py` salva um screenshot e o HTML real dos itens, que servem para recalibrar os seletores em `app_facilitador/browser_client.py`.
+
+---
+
+## Rodando pelo código-fonte
+
+Para desenvolver ou rodar fora do Windows:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate        # Linux/Mac: source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium   # só se não houver Edge ou Chrome na máquina
+python app.py
+```
+
+O painel abre em `http://127.0.0.1:5000` (ou na próxima porta livre).
+
+Os dados ficam na pasta do projeto quando rodando assim, e em `%LOCALAPPDATA%\AppFacilitador` no executável. `APP_FACILITADOR_DATA` força outro lugar.
+
+### Compilar o executável
+
+A compilação acontece sozinha no GitHub Actions a cada push (`.github/workflows/build-windows.yml`), que publica a release. Para compilar na mão, **numa máquina Windows** — o PyInstaller empacota o interpretador da máquina onde roda, não há compilação cruzada:
+
+```bash
+pip install pyinstaller
+pyinstaller --clean --noconfirm AppFacilitador.spec
+dist\AppFacilitador.exe --verificar
+```
+
+### Linha de comando
 
 O painel cobre o uso normal. Os scripts existem para automação e diagnóstico:
 
@@ -75,20 +91,10 @@ python scripts/list_folders.py
 python scripts/browser_list_inbox.py
 ```
 
-## Testes
+### Testes
 
 ```bash
 pytest -q
 ```
 
-Nenhum teste precisa de navegador ou login: o parsing, o banco, o painel e a varredura com scroll são testados com dados reais capturados da caixa de entrada e com um navegador falso.
-
-## Quando o Outlook Web mudar de layout
-
-A leitura depende da estrutura da página, que a Microsoft pode alterar sem aviso. Se parar de funcionar:
-
-```bash
-python scripts/browser_inbox_debug.py
-```
-
-Salva um screenshot e o HTML real dos itens, que servem para recalibrar os seletores em `app_facilitador/browser_client.py`.
+Nenhum teste precisa de navegador ou login: o parsing, o banco, o painel, a escolha do navegador, os caminhos de dados do executável e a varredura com scroll são testados com dados reais capturados da caixa de entrada e com um navegador falso.

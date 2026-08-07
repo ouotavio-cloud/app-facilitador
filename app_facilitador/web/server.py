@@ -7,22 +7,37 @@ misturá-lo a um laço de eventos traria complexidade sem ganho aqui.
 Nada sai da máquina: o servidor escuta só em localhost.
 """
 
+import os
+import threading
 from datetime import date
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
-from app_facilitador import browser_client, calendar_client, config, deadlines, storage
-from app_facilitador import proposal_detector
-from app_facilitador.web.jobs import ScanJob
+from app_facilitador import browser_client, calendar_client, config, deadlines, paths
+from app_facilitador import proposal_detector, storage
+from app_facilitador.web.jobs import LoginJob, ScanJob
 
 HOST = "127.0.0.1"
-PORT = 5000
+
+# Porta padrão. Se estiver ocupada, `run()` procura a próxima livre — num
+# app que o usuário abre com dois cliques, "porta em uso" seria um erro
+# sem tradução possível para quem só quer ver seus e-mails.
+DEFAULT_PORT = 5000
+PORT_ATTEMPTS = 20
 
 scan_job = ScanJob()
+login_job = LoginJob()
 
 
 def create_app() -> Flask:
-    app = Flask(__name__)
+    # Caminhos explícitos: dentro do executável os templates ficam na
+    # pasta temporária do PyInstaller, não ao lado do código-fonte.
+    web_dir = paths.resource_dir() / "app_facilitador" / "web"
+    app = Flask(
+        __name__,
+        template_folder=str(web_dir / "templates"),
+        static_folder=str(web_dir / "static"),
+    )
 
     @app.route("/")
     def index():
@@ -37,6 +52,8 @@ def create_app() -> Flask:
             scanned_folders = storage.list_scanned_folders(connection)
             total_messages = storage.count_messages(connection)
 
+        meetings = calendar_client.cached_meetings()
+
         return render_template(
             "index.html",
             processes=processes,
@@ -46,7 +63,9 @@ def create_app() -> Flask:
             selected_folder=selected_folder or "",
             total_messages=total_messages,
             has_session=config.BROWSER_STATE_PATH.exists(),
-            meetings=calendar_client.cached_meetings(),
+            meetings=meetings,
+            resumo=_daily_summary(processes, proposals, meetings, total_messages),
+            data_dir=str(config.BASE_DIR),
         )
 
     @app.post("/processos")
@@ -84,6 +103,20 @@ def create_app() -> Flask:
     def scan_status():
         return jsonify(scan_job.state.as_dict())
 
+    @app.post("/login")
+    def start_login():
+        login_job.start()
+        return redirect(url_for("index"))
+
+    @app.get("/login/status")
+    def login_status():
+        state = login_job.state.as_dict()
+        # A verdade sobre estar conectado é o arquivo de sessão existir, e
+        # não o resultado guardado desta execução: quem já conectou ontem
+        # continua conectado hoje sem clicar em nada.
+        state["connected"] = state["connected"] or config.BROWSER_STATE_PATH.exists()
+        return jsonify(state)
+
     @app.get("/pastas")
     def folders():
         """Consulta as pastas direto no Outlook, para o usuário escolher."""
@@ -101,7 +134,34 @@ def create_app() -> Flask:
             pass
         return redirect(url_for("index"))
 
+    @app.post("/encerrar")
+    def shutdown():
+        """Fecha o app a partir da própria tela.
+
+        No executável não há terminal para interromper com Ctrl+C, e
+        deixar um servidor rodando esquecido em segundo plano é pior que
+        um encerramento abrupto: aqui não há nada em memória para perder,
+        tudo já está no banco.
+        """
+        _schedule_shutdown()
+        return render_template("encerrado.html")
+
     return app
+
+
+# Espera antes de matar o processo, para a resposta HTTP chegar ao
+# navegador e o usuário ver a tela de despedida em vez de "conexão
+# recusada".
+SHUTDOWN_DELAY_S = 0.5
+
+
+def _schedule_shutdown() -> None:
+    """Agenda o encerramento do processo.
+
+    Isolado numa função para que os testes possam substituí-la — chamar
+    `os._exit` de dentro de um teste derrubaria o pytest junto.
+    """
+    threading.Timer(SHUTDOWN_DELAY_S, lambda: os._exit(0)).start()
 
 
 def _processes_with_status(connection) -> list[dict]:
@@ -121,17 +181,66 @@ def _processes_with_status(connection) -> list[dict]:
     return result
 
 
-def run(open_browser: bool = True) -> None:
+def _daily_summary(
+    processes: list[dict], proposals: list[dict], meetings: dict, total_messages: int
+) -> dict:
+    """Os números do topo da tela: o que exige atenção hoje.
+
+    Existe para responder "o que preciso olhar agora?" sem obrigar o
+    usuário a ler quatro tabelas — que é justamente o trabalho que o app
+    deveria poupar.
+    """
+    urgentes = [p for p in processes if p["status"] in ("vencido", "critico")]
+    nao_cadastrados = {
+        code
+        for proposal in proposals
+        for code, clue in zip(proposal["codes"], proposal["matched_by"])
+        if clue == "não cadastrado"
+    }
+
+    return {
+        "processos": len(processes),
+        "urgentes": len(urgentes),
+        "propostas": len(proposals),
+        "nao_cadastrados": len(nao_cadastrados),
+        "reunioes": len(meetings.get("events", [])) if not meetings.get("stale") else None,
+        "emails": total_messages,
+    }
+
+
+def _find_free_port(host: str, first_port: int, attempts: int) -> int:
+    import socket
+
+    for port in range(first_port, first_port + attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind((host, port))
+                return port
+            except OSError:
+                continue
+
+    raise RuntimeError(
+        f"Nenhuma porta livre entre {first_port} e {first_port + attempts - 1}."
+    )
+
+
+def run(open_browser: bool = True, port: int | None = None) -> None:
     """Sobe o servidor e abre o painel no navegador padrão."""
     app = create_app()
+    port = port or _find_free_port(HOST, DEFAULT_PORT, PORT_ATTEMPTS)
+    url = f"http://{HOST}:{port}"
 
     if open_browser:
-        import threading
         import webbrowser
 
         # Atraso curto para o servidor estar de pé quando a aba abrir.
-        threading.Timer(1.0, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
-    print(f"\nApp Facilitador rodando em http://{HOST}:{PORT}")
-    print("Feche esta janela para encerrar o app.\n")
-    app.run(host=HOST, port=PORT, debug=False)
+    print("\n  App Facilitador")
+    print(f"  Painel: {url}")
+    print(f"  Seus dados: {config.BASE_DIR}")
+    print("\n  Se a aba não abrir sozinha, copie o endereço acima no navegador.")
+    print("  Para encerrar: feche esta janela.\n")
+
+    app.run(host=HOST, port=port, debug=False)

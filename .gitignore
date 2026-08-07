@@ -18,3 +18,7 @@ debug_*.html
 data/
 *.db
 .meetings_cache.json
+
+# Saídas da compilação do executável (PyInstaller)
+build/
+dist/

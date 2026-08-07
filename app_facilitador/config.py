@@ -7,13 +7,15 @@ Command Line Tools", um app oficial da Microsoft presente em qualquer
 tenant, que só exige consentimento comum do próprio usuário.
 """
 
-from pathlib import Path
+from app_facilitador import paths
 
 CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
 AUTHORITY = "https://login.microsoftonline.com/common"
 SCOPES = ["Mail.Read", "Calendars.Read"]
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# Tudo que o app grava vai para a pasta de dados do usuário — que, no
+# executável, é diferente da pasta do programa (ver app_facilitador/paths.py).
+BASE_DIR = paths.data_dir()
 TOKEN_CACHE_PATH = BASE_DIR / ".token_cache.bin"
 
 # Banco de estado local: mensagens já processadas e códigos de processo

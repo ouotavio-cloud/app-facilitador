@@ -178,6 +178,77 @@ def test_unregistered_code_is_flagged_not_shown_as_identified(client):
     assert "cadastrar" in page
 
 
+def test_login_button_is_offered_when_there_is_no_session(client):
+    """O app compilado não tem terminal: conectar precisa ser um botão."""
+    assert "Conectar ao Outlook" in _page(client)
+
+
+def test_no_login_warning_once_the_session_exists(client):
+    config.BROWSER_STATE_PATH.write_text("{}", encoding="utf-8")
+
+    page = _page(client)
+
+    assert "Login pendente" not in page
+    assert "Outlook conectado" in page
+
+
+def test_login_status_reflects_a_session_saved_in_a_previous_run(client):
+    """Quem conectou ontem continua conectado hoje, sem clicar em nada."""
+    config.BROWSER_STATE_PATH.write_text("{}", encoding="utf-8")
+
+    assert client.get("/login/status").get_json()["connected"] is True
+
+
+def test_login_status_reports_disconnected_without_a_session(client):
+    assert client.get("/login/status").get_json()["connected"] is False
+
+
+def test_shutdown_says_goodbye_before_killing_the_process(client, monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(server, "_schedule_shutdown", lambda: chamadas.append(True))
+
+    response = client.post("/encerrar")
+
+    assert response.status_code == 200
+    assert "App encerrado" in response.get_data(as_text=True)
+    assert chamadas == [True]
+
+
+def test_summary_counts_what_needs_attention_today():
+    """Os números do topo respondem "o que preciso olhar agora?"."""
+    processes = [
+        {"status": "vencido"},
+        {"status": "critico"},
+        {"status": "ok"},
+        {"status": "sem_prazo"},
+    ]
+    proposals = [
+        {"codes": ["SUP.2026-197"], "matched_by": ["código"]},
+        {"codes": ["SUP.2026-888"], "matched_by": ["não cadastrado"]},
+        # O mesmo código desconhecido em dois e-mails é uma pendência só.
+        {"codes": ["SUP.2026-888"], "matched_by": ["não cadastrado"]},
+    ]
+
+    resumo = server._daily_summary(
+        processes, proposals, {"events": [{}, {}], "stale": False}, total_messages=42
+    )
+
+    assert resumo["urgentes"] == 2
+    assert resumo["processos"] == 4
+    assert resumo["propostas"] == 3
+    assert resumo["nao_cadastrados"] == 1
+    assert resumo["reunioes"] == 2
+    assert resumo["emails"] == 42
+
+
+def test_summary_hides_the_meeting_count_when_the_cache_is_from_another_day():
+    """Mostrar as reuniões de ontem como se fossem de hoje seria pior que
+    não mostrar número nenhum."""
+    resumo = server._daily_summary([], [], {"events": [{}, {}], "stale": True}, 0)
+
+    assert resumo["reunioes"] is None
+
+
 def test_scan_status_endpoint_reports_idle_state(client):
     status = client.get("/varredura/status").get_json()
 

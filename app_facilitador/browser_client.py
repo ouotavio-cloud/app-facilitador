@@ -115,31 +115,96 @@ selector => {
 # Pausa após trocar de pasta, dando tempo da nova lista assentar.
 _FOLDER_SETTLE_MS = 1_500
 
+# Navegadores já instalados que serão usados, na ordem de preferência.
+#
+# O app é distribuído como um executável que não deve exigir instalação
+# de nada: usar o Edge — presente em qualquer Windows — evita baixar um
+# Chromium de ~150 MB e evita o passo `playwright install`. O Chromium
+# empacotado continua servindo de último recurso para quem roda pelo
+# código-fonte.
+_BROWSER_CHANNELS = ["msedge", "chrome"]
 
-def login_and_save_session() -> None:
-    """Abre um navegador visível para o usuário logar manualmente uma vez."""
+# Quanto tempo o app espera o usuário concluir o login manual. Generoso
+# de propósito: pode haver autenticação em dois fatores, celular longe da
+# mesa, senha esquecida.
+LOGIN_TIMEOUT_MS = 10 * 60 * 1_000
+
+
+def launch_browser(playwright, headless: bool):
+    """Abre o navegador, preferindo um já instalado na máquina.
+
+    Tenta o Edge, depois o Chrome, e só então o Chromium que o Playwright
+    baixa à parte. Se nada funcionar, o erro precisa dizer o que tentou —
+    "falha ao abrir o navegador" sozinho não ajudaria ninguém a resolver.
+    """
+    tentativas = []
+
+    for channel in [*_BROWSER_CHANNELS, None]:
+        try:
+            if channel is None:
+                return playwright.chromium.launch(headless=headless)
+            return playwright.chromium.launch(headless=headless, channel=channel)
+        except Exception as exc:  # noqa: BLE001 - qualquer falha é "não tem esse aqui"
+            nome = channel or "Chromium empacotado"
+            tentativas.append(f"{nome}: {str(exc).splitlines()[0]}")
+
+    raise RuntimeError(
+        "Não foi possível abrir um navegador. Tentativas:\n  "
+        + "\n  ".join(tentativas)
+    )
+
+
+def login_and_save_session(on_status: Callable[[str], None] | None = None) -> None:
+    """Abre um navegador visível para o usuário logar manualmente uma vez.
+
+    Não pede confirmação no teclado: o app compilado não tem terminal onde
+    apertar Enter. O fim do login é detectado sozinho, quando a lista de
+    e-mails aparece na tela — que é exatamente o sinal de que a sessão
+    serve para o resto do app.
+    """
+
+    def anunciar(mensagem: str) -> None:
+        if on_status is not None:
+            on_status(mensagem)
+        else:
+            print(mensagem)
+
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=False)
-        context = browser.new_context()
+        browser = launch_browser(playwright, headless=False)
+        context = browser.new_context(viewport=_VIEWPORT)
         page = context.new_page()
         page.goto(config.OWA_URL)
 
-        print(
-            "\nUma janela do navegador foi aberta. Faça login normalmente "
-            "com sua conta Microsoft até ver sua caixa de entrada."
+        anunciar(
+            "Faça login com sua conta Microsoft na janela que abriu. "
+            "Assim que sua caixa de entrada aparecer, o app salva o acesso "
+            "e fecha a janela sozinho."
         )
-        input("Quando terminar de logar e ver seus e-mails, volte aqui e aperte Enter... ")
+
+        try:
+            page.wait_for_selector(
+                ", ".join(_MESSAGE_ITEM_SELECTORS), timeout=LOGIN_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError:
+            browser.close()
+            raise RuntimeError(
+                "O login não foi concluído a tempo. Clique em conectar de novo."
+            ) from None
+        except Exception as exc:  # noqa: BLE001 - janela fechada no meio do caminho
+            raise RuntimeError(
+                "A janela do navegador foi fechada antes do login terminar."
+            ) from exc
 
         context.storage_state(path=str(config.BROWSER_STATE_PATH))
         browser.close()
-        print(f"Sessão salva em {config.BROWSER_STATE_PATH}. Já pode fechar o navegador.")
+        anunciar("Acesso ao Outlook salvo. Já pode rodar a varredura.")
 
 
 def _require_saved_session() -> None:
     if not config.BROWSER_STATE_PATH.exists():
         raise RuntimeError(
-            "Nenhuma sessão salva encontrada. Rode primeiro: "
-            "python scripts/browser_login.py"
+            "O app ainda não tem acesso ao seu Outlook. "
+            "Clique em 'Conectar ao Outlook' no painel."
         )
 
 
@@ -313,7 +378,7 @@ class _BrowserSession:
 
     def __enter__(self) -> Page:
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=self._headless)
+        self._browser = launch_browser(self._playwright, self._headless)
         self._context = self._browser.new_context(
             storage_state=str(config.BROWSER_STATE_PATH),
             viewport=_VIEWPORT,

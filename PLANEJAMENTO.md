@@ -188,6 +188,14 @@ Componentes:
 10. **Indicador de prazo (2.3)** em `deadlines.py`, contado em dias corridos — o prazo dado ao fornecedor é data de calendário, e ignorar fins de semana faria o app afirmar que ainda há prazo quando o cliente já cobra.
 11. **Reuniões do dia (2.2)** em `calendar_client.py`, lidas da grade do calendário do Outlook Web e guardadas em cache para o painel abrir rápido. Cache de outro dia é sinalizado como desatualizado, em vez de exibir reuniões de ontem como se fossem de hoje.
 
+12. **Distribuição como executável (Fase 7)** — o app virou um `AppFacilitador.exe` único, baixável de uma release do GitHub. Três decisões sustentam isso:
+
+    - **Compilação no Windows via GitHub Actions** (`.github/workflows/build-windows.yml`). O PyInstaller não faz compilação cruzada: ele empacota o interpretador da máquina onde roda. Como o desenvolvimento acontece no Linux, quem produz o `.exe` é um runner `windows-latest`. O mesmo workflow roda os testes e executa `AppFacilitador.exe --verificar` antes de publicar — compilar sem erro não prova que o executável acha os templates.
+    - **Navegador: o Edge já instalado**, e não um Chromium embutido (`_BROWSER_CHANNELS` em `browser_client.py`). Evita ~150 MB no download e elimina o passo `playwright install`, coerente com o pedido de "baixar e usar, sem instalar nada antes". O Chromium empacotado continua como último recurso para quem roda pelo código-fonte.
+    - **Separação entre recursos e dados** (`paths.py`). No modo arquivo único o PyInstaller descompacta o programa numa pasta temporária que o Windows apaga ao fechar. Gravar o banco lá faria o usuário perder login e processos a cada vez que fechasse o app — silenciosamente. Os dados vão para `%LOCALAPPDATA%\AppFacilitador`; templates e CSS continuam junto do programa.
+
+13. **Login dentro do app**, sem terminal. A versão anterior pedia `python scripts/browser_login.py` e um Enter no console — impossível num `.exe` de duplo clique. Agora um botão abre a janela de login e o app detecta sozinho que terminou, quando a lista de e-mails aparece: o mesmo sinal de que a sessão serve para a varredura.
+
 ### Próximo passo em aberto
 - **Ler corpo completo e anexos** (resto da Fase 2): a detecção hoje cobre assunto e preview. Propostas cujo código só aparece dentro do PDF ainda passam batido — é o pedaço que falta para o Bloco 1.3, e o de maior impacto.
 - **Onde ficam as pastas de arquivamento** (Bloco 1.2): a árvore `Obra / Processo / Fornecedor / Proposta` depende de decidir onde essas pastas ficam (pasta local? OneDrive sincronizado?) e o que fazer com proposta revisada — substituir ou versionar. Precisa ser confirmado antes de implementar.

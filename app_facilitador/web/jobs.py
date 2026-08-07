@@ -97,3 +97,74 @@ class ScanJob:
     def _update_progress(self, scanned: int) -> None:
         with self._lock:
             self._state.scanned = scanned
+
+
+@dataclass
+class LoginState:
+    """Situação da conexão com o Outlook, para a tela acompanhar."""
+
+    running: bool = False
+    message: str | None = None
+    error: str | None = None
+    connected: bool = False
+
+    def as_dict(self) -> dict:
+        return {
+            "running": self.running,
+            "message": self.message,
+            "error": self.error,
+            "connected": self.connected,
+        }
+
+
+class LoginJob:
+    """Conecta o app ao Outlook numa thread separada.
+
+    Precisa ser em segundo plano porque o login manual pode levar
+    minutos (senha, dois fatores) e a requisição HTTP que o disparou não
+    pode ficar pendurada esperando.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = LoginState()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def state(self) -> LoginState:
+        with self._lock:
+            return self._state
+
+    def start(self) -> bool:
+        """Dispara a conexão. Devolve False se já houver uma em andamento."""
+        with self._lock:
+            if self._state.running:
+                return False
+            self._state = LoginState(running=True, message="Abrindo o navegador…")
+
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return True
+
+    def _run(self) -> None:
+        # Importado aqui, e não no topo, para o painel abrir mesmo numa
+        # instalação em que o Playwright falhe ao carregar: sem acesso ao
+        # Outlook o app ainda mostra o que já foi coletado antes.
+        from app_facilitador import browser_client
+
+        try:
+            browser_client.login_and_save_session(on_status=self._announce)
+            error = None
+            connected = True
+        except Exception as exc:  # noqa: BLE001 - a falha precisa chegar à tela
+            error = str(exc)
+            connected = False
+
+        with self._lock:
+            self._state.running = False
+            self._state.error = error
+            self._state.connected = connected
+
+    def _announce(self, message: str) -> None:
+        with self._lock:
+            self._state.message = message

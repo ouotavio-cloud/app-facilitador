@@ -4,22 +4,81 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>App Facilitador</title>
+  <link rel="icon" href="{{ url_for('static', filename='icone.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body data-conectado="{{ 'sim' if has_session else 'nao' }}">
 
 <header class="topo">
-  <h1>App Facilitador</h1>
-  <span class="contador">{{ total_messages }} e-mails registrados</span>
+  <div class="topo-interno">
+    <span class="marca">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect width="24" height="24" rx="6" fill="currentColor" opacity=".12"/>
+        <path d="M5 8.5h14M5 12h9M5 15.5h6" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round"/>
+      </svg>
+      App Facilitador
+    </span>
+
+    <span class="topo-espaco"></span>
+
+    <span id="pilula-conexao" class="pilula {{ 'pilula-ok' if has_session else 'pilula-alerta' }}">
+      <span class="ponto"></span>
+      <span id="texto-conexao">{{ 'Outlook conectado' if has_session else 'Outlook desconectado' }}</span>
+    </span>
+
+    <form method="post" action="{{ url_for('shutdown') }}">
+      <button type="submit" class="botao-secundario">Encerrar</button>
+    </form>
+  </div>
 </header>
 
+<main class="conteudo">
+
 {% if not has_session %}
-<div class="aviso aviso-erro">
-  <strong>Login pendente.</strong>
-  Feche o app e rode <code>python scripts/browser_login.py</code> uma vez para
-  salvar a sessão do Outlook. Sem isso, a varredura não funciona.
+<div class="aviso aviso-erro" id="aviso-login">
+  <p>
+    <strong>Login pendente.</strong>
+    O app ainda não tem acesso ao seu Outlook. Clique ao lado: abre uma janela
+    para você entrar com sua conta Microsoft. O acesso fica salvo só nesta
+    máquina e você não precisa repetir.
+  </p>
+  <form method="post" action="{{ url_for('start_login') }}">
+    <button type="submit" id="botao-login">Conectar ao Outlook</button>
+  </form>
 </div>
 {% endif %}
+
+<div class="aviso oculto" id="aviso-login-andamento">
+  <p><span id="mensagem-login"></span></p>
+</div>
+
+<section class="resumo-dia">
+  <div class="tile {{ 'tile-alerta' if resumo.urgentes else '' }}">
+    <div class="tile-numero">{{ resumo.urgentes }}</div>
+    <div class="tile-rotulo">Vencendo</div>
+  </div>
+  <div class="tile">
+    <div class="tile-numero">{{ resumo.processos }}</div>
+    <div class="tile-rotulo">Processos</div>
+  </div>
+  <div class="tile">
+    <div class="tile-numero">{{ resumo.propostas }}</div>
+    <div class="tile-rotulo">Propostas</div>
+  </div>
+  <div class="tile {{ 'tile-aviso' if resumo.nao_cadastrados else '' }}">
+    <div class="tile-numero">{{ resumo.nao_cadastrados }}</div>
+    <div class="tile-rotulo">A conferir</div>
+  </div>
+  <div class="tile">
+    <div class="tile-numero">{{ resumo.reunioes if resumo.reunioes is not none else '—' }}</div>
+    <div class="tile-rotulo">Reuniões hoje</div>
+  </div>
+  <div class="tile">
+    <div class="tile-numero">{{ resumo.emails }}</div>
+    <div class="tile-rotulo">E-mails lidos</div>
+  </div>
+</section>
 
 <section class="cartao">
   <div class="cartao-cabecalho">
@@ -27,7 +86,7 @@
     <span id="status-varredura" class="status">verificando…</span>
   </div>
 
-  <form method="post" action="{{ url_for('start_scan') }}" class="linha-form">
+  <form method="post" action="{{ url_for('start_scan') }}" class="linha-form linha-form-final">
     <label>
       Pasta
       <input type="text" name="pasta" list="lista-pastas" placeholder="Caixa de Entrada">
@@ -36,12 +95,13 @@
       </datalist>
     </label>
     <label>
-      Limite <span class="dica">(vazio = tudo)</span>
-      <input type="number" name="limite" min="1" placeholder="300" style="width: 7rem">
+      Limite
+      <input type="number" name="limite" min="1" placeholder="tudo" style="width: 7rem">
     </label>
     <button type="submit" id="botao-varrer">Varrer agora</button>
   </form>
 
+  <div id="barra-varredura" class="barra oculto"></div>
   <div id="resumo-varredura" class="resumo oculto"></div>
 </section>
 
@@ -60,29 +120,34 @@
     </form>
 
     {% if processes %}
-    <table>
-      <thead>
-        <tr><th>Processo</th><th>Obra</th><th>Prazo</th><th>E-mails</th><th></th></tr>
-      </thead>
-      <tbody>
-        {% for p in processes %}
-        <tr>
-          <td><code>{{ p.code }}</code></td>
-          <td>{{ p.obra or '—' }}</td>
-          <td>
-            <span class="selo selo-{{ p.status }}">{{ p.status_label }}</span>
-            <span class="dica">{{ p.status_description }}</span>
-          </td>
-          <td class="numero">{{ p.message_count }}</td>
-          <td>
-            <form method="post" action="{{ url_for('remove_process', code=p.code) }}">
-              <button type="submit" class="botao-texto" title="Remover">remover</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="rolagem-lateral">
+      <table>
+        <thead>
+          <tr><th>Processo</th><th>Obra</th><th>Prazo</th><th class="numero">E-mails</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for p in processes %}
+          <tr>
+            <td><code>{{ p.code }}</code></td>
+            <td>{{ p.obra or '—' }}</td>
+            <td>
+              <span class="selo selo-{{ p.status }}">{{ p.status_label }}</span>
+              {# Sem prazo, o selo já diz tudo — repetir embaixo é só ruído. #}
+              {% if p.status != 'sem_prazo' %}
+              <div class="dica">{{ p.status_description }}</div>
+              {% endif %}
+            </td>
+            <td class="numero">{{ p.message_count }}</td>
+            <td class="encolher">
+              <form method="post" action="{{ url_for('remove_process', code=p.code) }}">
+                <button type="submit" class="botao-texto botao-texto-perigo" title="Remover">remover</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
     {% else %}
     <p class="vazio">
       Nenhum processo cadastrado. Informe os códigos das cotações que você
@@ -101,19 +166,21 @@
 
     {% if meetings.events %}
       {% if meetings.stale %}
-      <div class="aviso">Estes horários são de uma consulta anterior. Clique em atualizar.</div>
+      <div class="aviso">
+        <p>Estes horários são de uma consulta anterior. Clique em atualizar.</p>
+      </div>
       {% endif %}
       <table>
         <tbody>
           {% for event in meetings.events %}
           <tr>
-            <td class="horario">{{ event.start }}{% if event.end %}–{{ event.end }}{% endif %}</td>
+            <td class="horario encolher">{{ event.start }}{% if event.end %}–{{ event.end }}{% endif %}</td>
             <td>{{ event.title }}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
-      <p class="dica">Consultado em {{ meetings.updated_at }}</p>
+      <p class="dica ressalva">Consultado em {{ meetings.updated_at }}</p>
     {% else %}
       <p class="vazio">
         Nenhuma reunião carregada. Clique em <strong>atualizar</strong> —
@@ -130,43 +197,45 @@
   </div>
 
   {% if proposals %}
-  <table>
-    <thead>
-      <tr><th>Processo</th><th>Fornecedor</th><th>Assunto</th><th>Recebido</th></tr>
-    </thead>
-    <tbody>
-      {% for m in proposals %}
-      <tr>
-        <td>
-          {% for code in m.codes %}
-          {% set clue = m.matched_by[loop.index0] %}
-          <div class="linha-codigo">
-            <code>{{ code }}</code>
-            {% if clue == 'não cadastrado' %}
-            <span class="selo selo-atencao">não cadastrado</span>
-            <form method="post" action="{{ url_for('add_process') }}">
-              <input type="hidden" name="codigo" value="{{ code }}">
-              <button type="submit" class="botao-texto">cadastrar</button>
-            </form>
-            {% else %}
-            <span class="dica">via {{ clue }}</span>
-            {% endif %}
-          </div>
-          {% endfor %}
-        </td>
-        <td>
-          {{ m.sender_name }}
-          <div class="dica">{{ m.sender_email }}</div>
-        </td>
-        <td>
-          {{ m.subject }}
-          {% if m.has_attachments %}<span class="selo selo-anexo">anexo</span>{% endif %}
-        </td>
-        <td class="horario">{{ m.received_at_raw or '—' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="rolagem-lateral">
+    <table>
+      <thead>
+        <tr><th>Processo</th><th>Fornecedor</th><th>Assunto</th><th>Recebido</th></tr>
+      </thead>
+      <tbody>
+        {% for m in proposals %}
+        <tr>
+          <td>
+            {% for code in m.codes %}
+            {% set clue = m.matched_by[loop.index0] %}
+            <div class="linha-codigo">
+              <code>{{ code }}</code>
+              {% if clue == 'não cadastrado' %}
+              <span class="selo selo-atencao">não cadastrado</span>
+              <form method="post" action="{{ url_for('add_process') }}">
+                <input type="hidden" name="codigo" value="{{ code }}">
+                <button type="submit" class="botao-texto">cadastrar</button>
+              </form>
+              {% else %}
+              <span class="dica">via {{ clue }}</span>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </td>
+          <td>
+            {{ m.sender_name }}
+            <div class="dica">{{ m.sender_email }}</div>
+          </td>
+          <td>
+            {{ m.subject }}
+            {% if m.has_attachments %}<span class="selo selo-anexo">anexo</span>{% endif %}
+          </td>
+          <td class="horario">{{ m.received_at_raw or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
   <p class="vazio">
     Nenhuma proposta identificada ainda. Cadastre seus processos e rode a
@@ -198,28 +267,37 @@
   </div>
 
   {% if recent %}
-  <table>
-    <thead>
-      <tr><th>Recebido</th><th>De</th><th>Assunto</th><th>Pasta</th></tr>
-    </thead>
-    <tbody>
-      {% for m in recent %}
-      <tr>
-        <td class="horario">{{ m.received_at_raw or '—' }}</td>
-        <td>{{ m.sender_name }}</td>
-        <td>
-          {{ m.subject }}
-          {% if m.has_attachments %}<span class="selo selo-anexo">anexo</span>{% endif %}
-        </td>
-        <td class="dica">{{ m.folder or '—' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="rolagem-lateral">
+    <table>
+      <thead>
+        <tr><th>Recebido</th><th>De</th><th>Assunto</th><th>Pasta</th></tr>
+      </thead>
+      <tbody>
+        {% for m in recent %}
+        <tr>
+          <td class="horario encolher">{{ m.received_at_raw or '—' }}</td>
+          <td>{{ m.sender_name }}</td>
+          <td>
+            {{ m.subject }}
+            {% if m.has_attachments %}<span class="selo selo-anexo">anexo</span>{% endif %}
+          </td>
+          <td class="dica">{{ m.folder or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
   <p class="vazio">Nenhum e-mail registrado ainda. Rode a varredura.</p>
   {% endif %}
 </section>
+
+<p class="rodape">
+  Tudo roda nesta máquina — nada é enviado para fora.<br>
+  Seus dados ficam em <code>{{ data_dir }}</code>
+</p>
+
+</main>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>

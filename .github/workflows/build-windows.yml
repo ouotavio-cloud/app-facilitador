@@ -1,0 +1,107 @@
+# Compila o App Facilitador para Windows e publica o .exe para download.
+#
+# A compilação precisa acontecer no Windows: o PyInstaller não faz
+# compilação cruzada — ele empacota o interpretador da máquina em que
+# roda. Como o desenvolvimento acontece no Linux, é este runner que
+# produz o executável que o usuário baixa.
+
+name: Compilar app para Windows
+
+on:
+  push:
+    branches: [claude/task-proposal-management-app-vt4xvm]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.11.1
+
+      - name: Rodar os testes
+        # Antes de empacotar: um executável quebrado publicado é pior que
+        # nenhum executável, porque o usuário perde tempo baixando.
+        run: pytest -q
+
+      - name: Compilar o executável
+        run: pyinstaller --clean --noconfirm AppFacilitador.spec
+
+      - name: Verificar o executável gerado
+        # Compilar sem erro não prova que funciona: o modo --verificar sobe
+        # o painel de dentro do .exe e confirma que os templates e o CSS
+        # foram empacotados junto.
+        run: |
+          $env:APP_FACILITADOR_DATA = "$env:RUNNER_TEMP\dados-teste"
+
+          .\dist\AppFacilitador.exe --verificar
+          if ($LASTEXITCODE -ne 0) { throw "O painel não subiu a partir do executável" }
+
+          # O runner do Windows tem Edge instalado, como a máquina do
+          # usuário: dá para provar aqui que o Playwright empacotado abre
+          # o navegador de verdade.
+          .\dist\AppFacilitador.exe --verificar-navegador
+          if ($LASTEXITCODE -ne 0) { throw "O executável não conseguiu abrir o navegador" }
+
+      - name: Guardar o executável como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppFacilitador-windows
+          path: dist/AppFacilitador.exe
+          if-no-files-found: error
+
+      - name: Publicar release para download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # O texto abaixo usa here-string de aspas simples (@'...'@): assim o
+        # PowerShell não interpreta as crases do markdown como caractere de
+        # escape nem tenta expandir nada. O commit entra por substituição.
+        run: |
+          $tag = "v$($env:GITHUB_RUN_NUMBER)"
+          $notas = @'
+          Baixe o **AppFacilitador.exe** abaixo e dê dois cliques.
+
+          Não precisa instalar Python nem nada além disso: o app usa o Microsoft Edge
+          que já vem no Windows para ler seu Outlook.
+
+          **Na primeira vez que abrir**, o Windows pode mostrar um aviso azul de
+          SmartScreen, porque o programa não tem assinatura digital paga. Clique em
+          **Mais informações** e depois em **Executar assim mesmo**.
+
+          Depois, no painel, clique em **Conectar ao Outlook** e entre com sua conta
+          Microsoft. O acesso fica salvo e não precisa ser repetido.
+
+          Seus dados ficam em `%LOCALAPPDATA%\AppFacilitador` e não saem da sua máquina.
+
+          Compilado a partir do commit COMMIT_SHA.
+          '@
+          $notas = $notas.Replace("COMMIT_SHA", $env:GITHUB_SHA)
+          Set-Content -Path notas-release.md -Value $notas -Encoding utf8
+
+          # Re-executar o mesmo build reaproveita o número da run e, com ele,
+          # a tag: nesse caso substituímos o anexo em vez de falhar.
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag dist/AppFacilitador.exe --clobber
+          } else {
+            gh release create $tag dist/AppFacilitador.exe `
+              --title "App Facilitador $tag" `
+              --notes-file notas-release.md `
+              --target $env:GITHUB_SHA
+          }
