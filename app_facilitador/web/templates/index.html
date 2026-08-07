@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>App Facilitador</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topo">
+  <h1>App Facilitador</h1>
+  <span class="contador">{{ total_messages }} e-mails registrados</span>
+</header>
+
+{% if not has_session %}
+<div class="aviso aviso-erro">
+  <strong>Login pendente.</strong>
+  Feche o app e rode <code>python scripts/browser_login.py</code> uma vez para
+  salvar a sessão do Outlook. Sem isso, a varredura não funciona.
+</div>
+{% endif %}
+
+<section class="cartao">
+  <div class="cartao-cabecalho">
+    <h2>Varredura do Outlook</h2>
+    <span id="status-varredura" class="status">verificando…</span>
+  </div>
+
+  <form method="post" action="{{ url_for('start_scan') }}" class="linha-form">
+    <label>
+      Pasta
+      <input type="text" name="pasta" list="lista-pastas" placeholder="Caixa de Entrada">
+      <datalist id="lista-pastas">
+        {% for folder in scanned_folders %}<option value="{{ folder }}">{% endfor %}
+      </datalist>
+    </label>
+    <label>
+      Limite <span class="dica">(vazio = tudo)</span>
+      <input type="number" name="limite" min="1" placeholder="300" style="width: 7rem">
+    </label>
+    <button type="submit" id="botao-varrer">Varrer agora</button>
+  </form>
+
+  <div id="resumo-varredura" class="resumo oculto"></div>
+</section>
+
+<div class="colunas">
+
+  <section class="cartao">
+    <div class="cartao-cabecalho">
+      <h2>Processos que você acompanha</h2>
+    </div>
+
+    <form method="post" action="{{ url_for('add_process') }}" class="linha-form">
+      <label>Código <input type="text" name="codigo" placeholder="SUP.2026-197" required></label>
+      <label>Obra <input type="text" name="obra" placeholder="Sabesp Lote 4"></label>
+      <label>Prazo <input type="text" name="prazo" placeholder="31/12/2026" style="width: 8rem"></label>
+      <button type="submit">Adicionar</button>
+    </form>
+
+    {% if processes %}
+    <table>
+      <thead>
+        <tr><th>Processo</th><th>Obra</th><th>Prazo</th><th>E-mails</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for p in processes %}
+        <tr>
+          <td><code>{{ p.code }}</code></td>
+          <td>{{ p.obra or '—' }}</td>
+          <td>
+            <span class="selo selo-{{ p.status }}">{{ p.status_label }}</span>
+            <span class="dica">{{ p.status_description }}</span>
+          </td>
+          <td class="numero">{{ p.message_count }}</td>
+          <td>
+            <form method="post" action="{{ url_for('remove_process', code=p.code) }}">
+              <button type="submit" class="botao-texto" title="Remover">remover</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="vazio">
+      Nenhum processo cadastrado. Informe os códigos das cotações que você
+      enviou — a busca procura cada um pelo código <em>e</em> pelo nome da obra.
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="cartao">
+    <div class="cartao-cabecalho">
+      <h2>Reuniões de hoje</h2>
+      <form method="post" action="{{ url_for('refresh_meetings') }}">
+        <button type="submit" class="botao-texto">atualizar</button>
+      </form>
+    </div>
+
+    {% if meetings.events %}
+      {% if meetings.stale %}
+      <div class="aviso">Estes horários são de uma consulta anterior. Clique em atualizar.</div>
+      {% endif %}
+      <table>
+        <tbody>
+          {% for event in meetings.events %}
+          <tr>
+            <td class="horario">{{ event.start }}{% if event.end %}–{{ event.end }}{% endif %}</td>
+            <td>{{ event.title }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="dica">Consultado em {{ meetings.updated_at }}</p>
+    {% else %}
+      <p class="vazio">
+        Nenhuma reunião carregada. Clique em <strong>atualizar</strong> —
+        abre o calendário no navegador e lê os compromissos de hoje.
+      </p>
+    {% endif %}
+  </section>
+
+</div>
+
+<section class="cartao">
+  <div class="cartao-cabecalho">
+    <h2>Propostas identificadas</h2>
+  </div>
+
+  {% if proposals %}
+  <table>
+    <thead>
+      <tr><th>Processo</th><th>Fornecedor</th><th>Assunto</th><th>Recebido</th></tr>
+    </thead>
+    <tbody>
+      {% for m in proposals %}
+      <tr>
+        <td>
+          {% for code in m.codes %}
+          {% set clue = m.matched_by[loop.index0] %}
+          <div class="linha-codigo">
+            <code>{{ code }}</code>
+            {% if clue == 'não cadastrado' %}
+            <span class="selo selo-atencao">não cadastrado</span>
+            <form method="post" action="{{ url_for('add_process') }}">
+              <input type="hidden" name="codigo" value="{{ code }}">
+              <button type="submit" class="botao-texto">cadastrar</button>
+            </form>
+            {% else %}
+            <span class="dica">via {{ clue }}</span>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </td>
+        <td>
+          {{ m.sender_name }}
+          <div class="dica">{{ m.sender_email }}</div>
+        </td>
+        <td>
+          {{ m.subject }}
+          {% if m.has_attachments %}<span class="selo selo-anexo">anexo</span>{% endif %}
+        </td>
+        <td class="horario">{{ m.received_at_raw or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="vazio">
+    Nenhuma proposta identificada ainda. Cadastre seus processos e rode a
+    varredura.
+  </p>
+  {% endif %}
+
+  <p class="dica ressalva">
+    Códigos marcados como <strong>não cadastrado</strong> apareceram nos
+    e-mails mas não estão na sua lista de processos — clique em
+    <em>cadastrar</em> se forem seus.
+    <br>
+    A busca cobre hoje o <strong>assunto e o preview</strong> que aparecem na
+    lista. Se o código estiver apenas dentro do anexo, ainda não é encontrado.
+  </p>
+</section>
+
+<section class="cartao">
+  <div class="cartao-cabecalho">
+    <h2>E-mails recentes</h2>
+    <form method="get" action="{{ url_for('index') }}">
+      <select name="pasta" onchange="this.form.submit()">
+        <option value="">todas as pastas</option>
+        {% for folder in scanned_folders %}
+        <option value="{{ folder }}" {% if folder == selected_folder %}selected{% endif %}>{{ folder }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  {% if recent %}
+  <table>
+    <thead>
+      <tr><th>Recebido</th><th>De</th><th>Assunto</th><th>Pasta</th></tr>
+    </thead>
+    <tbody>
+      {% for m in recent %}
+      <tr>
+        <td class="horario">{{ m.received_at_raw or '—' }}</td>
+        <td>{{ m.sender_name }}</td>
+        <td>
+          {{ m.subject }}
+          {% if m.has_attachments %}<span class="selo selo-anexo">anexo</span>{% endif %}
+        </td>
+        <td class="dica">{{ m.folder or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="vazio">Nenhum e-mail registrado ainda. Rode a varredura.</p>
+  {% endif %}
+</section>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

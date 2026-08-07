@@ -1,82 +1,79 @@
 # App Facilitador
 
-Automação pessoal para organizar propostas de fornecedores e tarefas do dia a dia a partir do Outlook. Roda 100% local — sem servidor, sem backend remoto. Veja `PLANEJAMENTO.md` para o plano completo.
+App local para acompanhar propostas de fornecedores e organizar as tarefas do dia a partir do Outlook. Roda inteiramente na sua máquina — sem servidor, sem nuvem.
 
-Como a Microsoft Graph API está bloqueada pela política de TI da organização (e o novo Outlook não mantém cache local legível), o app lê o Outlook Web em um navegador controlado localmente pelo Playwright, usando exatamente o login que o usuário já faz todo dia. Detalhes e alternativas descartadas em `PLANEJAMENTO.md`, seção 2.
+Como a Microsoft Graph API está bloqueada pela política de TI da organização (e o novo Outlook não mantém cache local legível), o app lê o Outlook Web em um navegador controlado localmente, usando o mesmo login que você já faz todo dia. Detalhes e alternativas descartadas em `PLANEJAMENTO.md`, seção 2.
 
-## Setup
+## Instalação (uma vez)
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+.venv\Scripts\activate        # Linux/Mac: source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-## Uso
-
-### 1. Login (uma vez só)
+## Login no Outlook (uma vez)
 
 ```bash
 python scripts/browser_login.py
 ```
 
-Abre uma janela do navegador. Faça login normalmente com sua conta Microsoft até ver a caixa de entrada, volte ao terminal e aperte Enter. A sessão fica salva em `.browser_state.json` (arquivo local, nunca versionado) e é reaproveitada nas próximas execuções.
+Abre uma janela do navegador. Faça login com sua conta Microsoft até ver a caixa de entrada, volte ao terminal e aperte Enter. A sessão fica salva em `.browser_state.json` (local, nunca versionado) e é reaproveitada depois.
 
-> No Windows, use o **PowerShell** comum, não o PowerShell ISE — o ISE não repassa o Enter para o script e a espera do login trava.
+> No Windows use o **PowerShell** comum, não o PowerShell ISE — o ISE não repassa o Enter para o script e a espera do login trava.
 
-### 2. Cadastrar os processos que você acompanha
+## Abrir o app
+
+Duplo clique em **`Abrir App Facilitador.bat`**, ou pelo terminal:
 
 ```bash
-python scripts/processos.py            # modo interativo
+python app.py
+```
+
+O painel abre no navegador em `http://127.0.0.1:5000`.
+
+## O que o painel faz
+
+**Processos que você acompanha** — cadastre o código de cada cotação (`SUP.AAAA-NNN`), o nome da obra e o prazo. Cada processo mostra um semáforo de vencimento:
+
+| Selo | Quando |
+|---|---|
+| Vencido | o prazo já passou |
+| Vence já | até 2 dias |
+| Atenção | até 7 dias |
+| No prazo | mais de 7 dias |
+
+A contagem é em dias corridos: o prazo dado ao fornecedor é uma data de calendário, e tratar sábado como "dia que não conta" faria o app dizer que ainda há prazo quando o cliente já cobra.
+
+**Varredura do Outlook** — percorre a pasta escolhida rolando a lista inteira (o Outlook Web só mantém na página os e-mails visíveis, então alcançar o histórico exige rolar) e identifica os processos cadastrados. Roda em segundo plano: o andamento aparece na tela e você pode continuar usando o painel. Rodar duas vezes não duplica nada.
+
+Cada processo é procurado **das duas formas** — pelo código e pelo nome da obra — porque uma cobre a falha da outra: quando o fornecedor escreve o código de um jeito inesperado, o nome da obra no assunto ainda identifica o processo.
+
+**Propostas identificadas** — os e-mails ligados aos seus processos, indicando por qual pista cada um foi reconhecido. Códigos que apareceram nos e-mails mas não estão cadastrados aparecem marcados, com um botão para cadastrar na hora — assim uma cotação esquecida vira pendência visível em vez de sumir.
+
+**Reuniões de hoje** — lê os compromissos do calendário. Clique em *atualizar* para consultar; o resultado fica em cache para o painel abrir rápido. Se o cache for de outro dia, o app avisa em vez de mostrar reuniões de ontem como se fossem de hoje.
+
+**E-mails recentes** — os últimos e-mails registrados, filtráveis por pasta.
+
+## Limitações atuais
+
+Duas coisas do escopo original ainda não estão prontas:
+
+- **A busca cobre assunto e preview**, que é o que a lista de e-mails expõe. Se o código do processo estiver apenas dentro do anexo, ainda não é encontrado — abrir cada mensagem e ler os anexos é o próximo passo.
+- **Não há arquivamento em pastas** `Obra / Processo / Fornecedor / Proposta`. Falta decidir onde essas pastas devem ficar.
+
+## Uso por linha de comando
+
+O painel cobre o uso normal. Os scripts existem para automação e diagnóstico:
+
+```bash
+python scripts/scan_inbox.py --pasta "caixa real" --limite 300
 python scripts/processos.py --listar
-python scripts/processos.py --remover SUP.2026-197
-```
-
-Informe o código de cada cotação (`SUP.AAAA-NNN`) e, opcionalmente, o nome da obra. A busca procura cada processo **das duas formas** — pelo código e pelo nome da obra — porque uma reforça a outra: quando o fornecedor escreve o código de um jeito inesperado, o nome da obra no assunto ainda identifica o processo.
-
-O código digitado é normalizado, então tanto faz escrever `SUP.2026-197`, `sup 2026 197` ou `SUP2026197`.
-
-### 3. Varredura
-
-```bash
-python scripts/scan_inbox.py                      # Caixa de Entrada inteira
-python scripts/scan_inbox.py --limite 50          # para depois de 50 e-mails
-python scripts/scan_inbox.py --pasta "caixa real" # outra pasta
-python scripts/scan_inbox.py --sem-janela         # sem abrir a janela
-```
-
-Percorre a pasta rolando a lista (o Outlook Web só mantém no DOM os itens visíveis, então alcançar o histórico exige rolar), identifica os processos cadastrados e registra tudo em `app_facilitador.db`.
-
-O resumo separa duas coisas: os **processos identificados** (que você cadastrou) e os **códigos vistos mas não cadastrados** — assim uma cotação que você esqueceu de registrar aparece como pendência em vez de sumir.
-
-Rodar duas vezes não duplica nada: o controle é por `conv_id` da conversa.
-
-Para descobrir os nomes exatos das pastas:
-
-```bash
-python scripts/list_folders.py
-```
-
-### 4. Ver o que foi encontrado
-
-```bash
 python scripts/show_results.py
-```
-
-Lista os e-mails identificados, indicando por qual pista cada processo foi reconhecido (código, obra, ou ambos) — sem precisar abrir o navegador.
-
-### Conferir a extração
-
-```bash
+python scripts/list_folders.py
 python scripts/browser_list_inbox.py
 ```
-
-Mostra os e-mails visíveis já com remetente, assunto, data e preview separados — útil para verificar rapidamente se a leitura da tela continua correta.
-
-## Limitação atual da detecção
-
-A busca cobre hoje o **assunto e o preview** que aparecem na lista de e-mails. Se o código do processo estiver apenas dentro do anexo (ou no meio do corpo, fora do trecho do preview), ele ainda não é encontrado — abrir cada mensagem e ler os anexos é o próximo passo do roadmap.
 
 ## Testes
 
@@ -84,14 +81,14 @@ A busca cobre hoje o **assunto e o preview** que aparecem na lista de e-mails. S
 pytest -q
 ```
 
-Os testes não precisam de navegador nem de login: a lógica de parsing, o banco e a varredura com scroll são testados com dados reais capturados da caixa de entrada e com um navegador falso.
+Nenhum teste precisa de navegador ou login: o parsing, o banco, o painel e a varredura com scroll são testados com dados reais capturados da caixa de entrada e com um navegador falso.
 
 ## Quando o Outlook Web mudar de layout
 
-A extração depende da estrutura da página, que a Microsoft pode alterar sem aviso. Se a leitura parar de funcionar, rode o diagnóstico:
+A leitura depende da estrutura da página, que a Microsoft pode alterar sem aviso. Se parar de funcionar:
 
 ```bash
 python scripts/browser_inbox_debug.py
 ```
 
-Ele salva um screenshot e o HTML real dos itens da lista, que servem para recalibrar os seletores em `app_facilitador/browser_client.py`.
+Salva um screenshot e o HTML real dos itens, que servem para recalibrar os seletores em `app_facilitador/browser_client.py`.

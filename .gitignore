@@ -17,3 +17,4 @@ debug_*.html
 # Estado local do app (banco de dados, propostas baixadas)
 data/
 *.db
+.meetings_cache.json

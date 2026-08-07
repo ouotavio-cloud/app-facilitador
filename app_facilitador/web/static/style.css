@@ -1,0 +1,206 @@
+:root {
+  --fundo: #f4f5f7;
+  --cartao: #ffffff;
+  --borda: #dfe3e8;
+  --texto: #1f2933;
+  --texto-fraco: #6b7684;
+  --destaque: #1a56db;
+  --ok: #0f7b3e;
+  --ok-fundo: #e3f5ea;
+  --atencao: #96690a;
+  --atencao-fundo: #fdf3d7;
+  --critico: #b23c17;
+  --critico-fundo: #fdeae2;
+  --vencido: #a01b1b;
+  --vencido-fundo: #fbe3e3;
+  --neutro-fundo: #eceef1;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+  background: var(--fundo);
+  color: var(--texto);
+  font: 15px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.topo {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.topo h1 { margin: 0; font-size: 1.4rem; }
+.contador { color: var(--texto-fraco); font-size: 0.9rem; }
+
+.cartao {
+  background: var(--cartao);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  padding: 1.1rem 1.25rem;
+  margin-bottom: 1.25rem;
+}
+
+.cartao-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.cartao-cabecalho h2 { margin: 0; font-size: 1.05rem; }
+
+.colunas {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 1.25rem;
+}
+
+@media (max-width: 900px) {
+  .colunas { grid-template-columns: 1fr; }
+}
+
+.linha-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.linha-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--texto-fraco);
+}
+
+input, select {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--borda);
+  border-radius: 5px;
+  font: inherit;
+  background: #fff;
+  color: var(--texto);
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 5px;
+  background: var(--destaque);
+  color: #fff;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button:hover { filter: brightness(1.08); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.botao-texto {
+  background: none;
+  color: var(--texto-fraco);
+  padding: 0.2rem 0.35rem;
+  font-size: 0.85rem;
+  text-decoration: underline;
+}
+
+.botao-texto:hover { color: var(--critico); filter: none; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+th {
+  text-align: left;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--texto-fraco);
+  font-weight: 600;
+  padding: 0.4rem 0.6rem 0.4rem 0;
+  border-bottom: 1px solid var(--borda);
+}
+
+td {
+  padding: 0.55rem 0.6rem 0.55rem 0;
+  border-bottom: 1px solid var(--borda);
+  vertical-align: top;
+}
+
+tr:last-child td { border-bottom: none; }
+
+.numero { text-align: right; font-variant-numeric: tabular-nums; }
+.horario { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--texto-fraco); }
+
+code {
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--neutro-fundo);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+
+.dica { color: var(--texto-fraco); font-size: 0.82rem; }
+.ressalva { margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--borda); }
+.vazio { color: var(--texto-fraco); margin: 0.5rem 0; }
+
+.selo {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.selo-ok { background: var(--ok-fundo); color: var(--ok); }
+.selo-atencao { background: var(--atencao-fundo); color: var(--atencao); }
+.selo-critico { background: var(--critico-fundo); color: var(--critico); }
+.selo-vencido { background: var(--vencido-fundo); color: var(--vencido); }
+.selo-sem_prazo { background: var(--neutro-fundo); color: var(--texto-fraco); }
+.selo-anexo { background: var(--neutro-fundo); color: var(--texto-fraco); font-weight: 500; }
+
+.linha-codigo {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.2rem;
+}
+
+.linha-codigo form { display: inline; }
+
+.status { font-size: 0.85rem; color: var(--texto-fraco); }
+.status-rodando { color: var(--destaque); font-weight: 600; }
+
+.aviso {
+  background: var(--atencao-fundo);
+  color: var(--atencao);
+  border-radius: 6px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.aviso-erro { background: var(--vencido-fundo); color: var(--vencido); }
+
+.resumo {
+  background: var(--neutro-fundo);
+  border-radius: 6px;
+  padding: 0.8rem 1rem;
+  margin-top: 0.5rem;
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+  font-family: "SF Mono", Consolas, monospace;
+}
+
+.oculto { display: none; }

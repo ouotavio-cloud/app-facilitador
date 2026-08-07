@@ -10,7 +10,7 @@ do usuário.
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from app_facilitador import config
@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS messages (
     preview TEXT,
     is_pinned INTEGER NOT NULL DEFAULT 0,
     has_attachments INTEGER NOT NULL DEFAULT 0,
+    folder TEXT,
     first_seen_at TEXT NOT NULL
 );
 
@@ -52,9 +53,28 @@ CREATE INDEX IF NOT EXISTS idx_proposal_codes_code ON proposal_codes(code);
 CREATE TABLE IF NOT EXISTS processes (
     code TEXT PRIMARY KEY,
     obra TEXT,
+    deadline TEXT,
     created_at TEXT NOT NULL
 );
 """
+
+# Colunas acrescentadas depois da primeira versão do schema. Um CREATE
+# TABLE IF NOT EXISTS não altera tabela existente, então bancos criados
+# por versões anteriores precisam receber as colunas novas aqui.
+_MIGRATIONS = [
+    ("processes", "deadline", "ALTER TABLE processes ADD COLUMN deadline TEXT"),
+    ("proposal_codes", "matched_by", "ALTER TABLE proposal_codes ADD COLUMN matched_by TEXT"),
+    ("messages", "folder", "ALTER TABLE messages ADD COLUMN folder TEXT"),
+]
+
+
+def _apply_migrations(connection: sqlite3.Connection) -> None:
+    for table, column, statement in _MIGRATIONS:
+        columns = {
+            row["name"] for row in connection.execute(f"PRAGMA table_info({table})")
+        }
+        if column not in columns:
+            connection.execute(statement)
 
 
 @contextmanager
@@ -65,24 +85,37 @@ def connect(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
     connection.row_factory = sqlite3.Row
     try:
         connection.executescript(_SCHEMA)
+        _apply_migrations(connection)
         yield connection
         connection.commit()
     finally:
         connection.close()
 
 
-def add_process(connection: sqlite3.Connection, code: str, obra: str | None = None) -> bool:
+def add_process(
+    connection: sqlite3.Connection,
+    code: str,
+    obra: str | None = None,
+    deadline: date | None = None,
+) -> bool:
     """Cadastra um processo de cotação. Devolve True se era novo.
 
-    Recadastrar um código existente atualiza o nome da obra, para permitir
+    Recadastrar um código existente atualiza obra e prazo, para permitir
     corrigir um cadastro sem apagar e recriar.
     """
     cursor = connection.execute(
         """
-        INSERT INTO processes (code, obra, created_at) VALUES (?, ?, ?)
-        ON CONFLICT(code) DO UPDATE SET obra = excluded.obra
+        INSERT INTO processes (code, obra, deadline, created_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(code) DO UPDATE SET
+            obra = excluded.obra,
+            deadline = excluded.deadline
         """,
-        (code, obra, datetime.now().isoformat(timespec="seconds")),
+        (
+            code,
+            obra,
+            deadline.isoformat() if deadline else None,
+            datetime.now().isoformat(timespec="seconds"),
+        ),
     )
     return cursor.rowcount > 0
 
@@ -94,10 +127,22 @@ def remove_process(connection: sqlite3.Connection, code: str) -> bool:
 
 
 def list_processes(connection: sqlite3.Connection) -> list[dict]:
+    """Processos acompanhados, cada um com a contagem de e-mails já ligados a ele."""
     rows = connection.execute(
-        "SELECT code, obra, created_at FROM processes ORDER BY code"
+        """
+        SELECT p.code, p.obra, p.deadline, p.created_at,
+               COUNT(pc.conv_id) AS message_count
+        FROM processes p
+        LEFT JOIN proposal_codes pc ON pc.code = p.code
+        GROUP BY p.code
+        ORDER BY p.deadline IS NULL, p.deadline, p.code
+        """
     ).fetchall()
-    return [dict(row) for row in rows]
+
+    return [
+        {**dict(row), "deadline_date": date.fromisoformat(row["deadline"]) if row["deadline"] else None}
+        for row in rows
+    ]
 
 
 def save_message(
@@ -105,6 +150,7 @@ def save_message(
     message: dict,
     codes: list[str],
     matched_by: dict[str, str] | None = None,
+    folder: str | None = None,
 ) -> bool:
     """Grava a mensagem e seus códigos de processo. Devolve True se era nova.
 
@@ -117,9 +163,10 @@ def save_message(
         """
         INSERT INTO messages (
             conv_id, sender_name, sender_email, subject, received_at,
-            received_at_raw, preview, is_pinned, has_attachments, first_seen_at
+            received_at_raw, preview, is_pinned, has_attachments, folder,
+            first_seen_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(conv_id) DO NOTHING
         """,
         (
@@ -132,6 +179,7 @@ def save_message(
             message.get("preview"),
             int(bool(message.get("is_pinned"))),
             int(bool(message.get("has_attachments"))),
+            folder,
             datetime.now().isoformat(timespec="seconds"),
         ),
     )
@@ -150,6 +198,44 @@ def save_message(
 
 def count_messages(connection: sqlite3.Connection) -> int:
     return connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+
+
+def list_recent_messages(
+    connection: sqlite3.Connection, folder: str | None = None, limit: int = 20
+) -> list[dict]:
+    """E-mails mais recentes primeiro, opcionalmente de uma pasta só.
+
+    Atende o item 2.1 do pedido: enumerar os e-mails novos que chegaram
+    na pasta de trabalho do usuário, do mais recente para o mais antigo.
+
+    Mensagens sem data reconhecida vão para o fim: sem `received_at` não
+    dá para afirmar que são recentes, e colocá-las no topo (onde o NULL
+    cairia por padrão) daria uma ordem enganosa.
+    """
+    where = "WHERE folder = ?" if folder else ""
+    params = (folder, limit) if folder else (limit,)
+
+    rows = connection.execute(
+        f"""
+        SELECT conv_id, sender_name, sender_email, subject, received_at,
+               received_at_raw, preview, has_attachments, folder
+        FROM messages
+        {where}
+        ORDER BY received_at IS NULL, received_at DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def list_scanned_folders(connection: sqlite3.Connection) -> list[str]:
+    """Pastas que já foram varridas ao menos uma vez."""
+    rows = connection.execute(
+        "SELECT DISTINCT folder FROM messages WHERE folder IS NOT NULL ORDER BY folder"
+    ).fetchall()
+    return [row["folder"] for row in rows]
 
 
 def list_messages_with_codes(connection: sqlite3.Connection) -> list[dict]:

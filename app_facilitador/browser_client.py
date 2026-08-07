@@ -8,7 +8,7 @@ localmente para reaproveitar nas próximas execuções.
 
 from collections.abc import Callable, Iterator
 
-from playwright.sync_api import BrowserContext, Page
+from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
@@ -141,20 +141,6 @@ def _require_saved_session() -> None:
             "Nenhuma sessão salva encontrada. Rode primeiro: "
             "python scripts/browser_login.py"
         )
-
-
-def _open_inbox(context: BrowserContext) -> Page:
-    """Abre a caixa de entrada e espera os itens da lista aparecerem.
-
-    Não usamos `wait_for_load_state("networkidle")`: o Outlook Web mantém
-    sincronização em segundo plano o tempo todo, então a rede nunca fica
-    de fato ociosa e essa espera expira por timeout. Esperar diretamente
-    pelo primeiro seletor de item de e-mail é mais confiável.
-    """
-    page = context.new_page()
-    page.goto(config.OWA_URL)
-    page.wait_for_selector(", ".join(_MESSAGE_ITEM_SELECTORS), timeout=60_000)
-    return page
 
 
 def _find_message_items(page: Page):
@@ -313,29 +299,55 @@ def scan_inbox(
         page.wait_for_timeout(_SCROLL_SETTLE_MS)
 
 
-def open_inbox_session(headless: bool = False):
-    """Context manager que entrega a caixa de entrada pronta para leitura.
+class _BrowserSession:
+    """Abre o navegador com a sessão salva e o fecha ao final.
 
-    Centraliza o boilerplate de abrir o navegador com a sessão salva, para
-    que os scripts e o scanner não repitam esse arranjo.
+    Centraliza o arranjo de Playwright + estado de login, para que os
+    scripts, o scanner e o app não o repitam.
     """
+
+    def __init__(self, url: str, ready_selector: str, headless: bool):
+        self._url = url
+        self._ready_selector = ready_selector
+        self._headless = headless
+
+    def __enter__(self) -> Page:
+        self._playwright = sync_playwright().start()
+        self._browser = self._playwright.chromium.launch(headless=self._headless)
+        self._context = self._browser.new_context(
+            storage_state=str(config.BROWSER_STATE_PATH),
+            viewport=_VIEWPORT,
+        )
+        page = self._context.new_page()
+        page.goto(self._url)
+        # Esperamos por um elemento da tela, e não por
+        # `wait_for_load_state("networkidle")`: o Outlook Web sincroniza em
+        # segundo plano o tempo todo, então a rede nunca fica ociosa e essa
+        # espera expira por timeout.
+        page.wait_for_selector(self._ready_selector, timeout=60_000)
+        return page
+
+    def __exit__(self, *exc_info) -> None:
+        self._browser.close()
+        self._playwright.stop()
+
+
+def open_inbox_session(headless: bool = False) -> _BrowserSession:
+    """Context manager que entrega a caixa de entrada pronta para leitura."""
     _require_saved_session()
+    return _BrowserSession(
+        config.OWA_URL, ", ".join(_MESSAGE_ITEM_SELECTORS), headless
+    )
 
-    class _InboxSession:
-        def __enter__(self) -> Page:
-            self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(headless=headless)
-            self._context = self._browser.new_context(
-                storage_state=str(config.BROWSER_STATE_PATH),
-                viewport=_VIEWPORT,
-            )
-            return _open_inbox(self._context)
 
-        def __exit__(self, *exc_info) -> None:
-            self._browser.close()
-            self._playwright.stop()
-
-    return _InboxSession()
+def open_calendar_session(headless: bool = False) -> _BrowserSession:
+    """Context manager que entrega o calendário do dia pronto para leitura."""
+    _require_saved_session()
+    # A grade do calendário é montada por JS; esperar por ela evita ler a
+    # página antes dos compromissos existirem.
+    return _BrowserSession(
+        config.OWA_CALENDAR_URL, '[role="grid"], [role="main"]', headless
+    )
 
 
 def print_visible_messages() -> None:

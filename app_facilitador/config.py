@@ -25,7 +25,12 @@ GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 # Automação do Outlook Web (usada quando a Graph API está bloqueada por
 # política de TI e não há cache local legível do novo Outlook).
 OWA_URL = "https://outlook.office.com/mail/"
+OWA_CALENDAR_URL = "https://outlook.office.com/calendar/view/day"
 BROWSER_STATE_PATH = BASE_DIR / ".browser_state.json"
+
+# Reuniões lidas do calendário, guardadas para o painel abrir sem esperar
+# um navegador subir a cada carregamento da página.
+MEETINGS_CACHE_PATH = BASE_DIR / ".meetings_cache.json"
 
 # Padrões de regex para o código do processo de cotação (ex.: SUP.2026-197).
 # Lista configurável (ver PLANEJAMENTO.md, seção 3) em vez de um formato
