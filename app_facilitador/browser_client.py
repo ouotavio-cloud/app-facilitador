@@ -53,15 +53,54 @@ selector => {
 }
 """
 
+# Rola a lista de e-mails de fato.
+#
+# Não dá para usar `scroll_into_view_if_needed()` no último item: ele já
+# está dentro da viewport quando a lista é curta, então a chamada não faz
+# nada e a varredura empaca nos primeiros e-mails. Aqui subimos dos itens
+# até o ancestral que realmente rola e mexemos no `scrollTop` dele.
+_JS_SCROLL_LIST = """
+([selector, fraction]) => {
+    const item = document.querySelector(selector);
+    if (!item) return { scrolled: false, at_end: true };
+
+    let el = item.parentElement;
+    while (el && el !== document.body) {
+        const overflowY = getComputedStyle(el).overflowY;
+        const scrollable = overflowY === 'auto' || overflowY === 'scroll';
+        if (scrollable && el.scrollHeight > el.clientHeight + 10) {
+            const before = el.scrollTop;
+            el.scrollTop = before + el.clientHeight * fraction;
+            return {
+                scrolled: el.scrollTop > before,
+                at_end: el.scrollTop + el.clientHeight >= el.scrollHeight - 2,
+            };
+        }
+        el = el.parentElement;
+    }
+    return { scrolled: false, at_end: true };
+}
+"""
+
 # Quantas rodadas seguidas de scroll sem nenhuma conversa nova antes de
 # considerar que a lista acabou. Mais de uma porque o carregamento é
 # assíncrono: uma rodada vazia pode significar apenas que o Outlook ainda
 # não devolveu o próximo bloco.
 _STAGNANT_ROUNDS_BEFORE_STOP = 3
 
+# Fração da altura visível avançada a cada scroll. Menos que uma tela
+# inteira de propósito: a lista é virtualizada, e rolar a tela cheia
+# descartaria itens do DOM antes de terem sido extraídos. A sobreposição
+# garante que nenhuma conversa passe despercebida.
+_SCROLL_FRACTION = 0.8
+
 # Pausa após cada scroll, dando tempo do Outlook Web buscar e renderizar
 # o próximo bloco da lista virtualizada.
-_SCROLL_SETTLE_MS = 1_200
+_SCROLL_SETTLE_MS = 1_000
+
+# Uma janela maior renderiza mais e-mails por vez, reduzindo o número de
+# rodadas necessárias para percorrer uma caixa com milhares de conversas.
+_VIEWPORT = {"width": 1600, "height": 1200}
 
 
 def login_and_save_session() -> None:
@@ -170,11 +209,14 @@ def scan_inbox(
         if on_progress is not None:
             on_progress(len(seen))
 
-        items = page.locator(selector)
-        count = items.count()
-        if count == 0:
-            return
-        items.nth(count - 1).scroll_into_view_if_needed()
+        scroll = page.evaluate(_JS_SCROLL_LIST, [selector, _SCROLL_FRACTION])
+        # Chegar ao fim da barra de rolagem não significa fim da lista: o
+        # Outlook carrega o próximo bloco quando o fim é alcançado. Só
+        # paramos quando, além disso, as rodadas seguintes não trouxerem
+        # nenhuma conversa nova.
+        if not scroll["scrolled"] and scroll["at_end"]:
+            stagnant_rounds += 1
+
         page.wait_for_timeout(_SCROLL_SETTLE_MS)
 
 
@@ -191,7 +233,8 @@ def open_inbox_session(headless: bool = False):
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(headless=headless)
             self._context = self._browser.new_context(
-                storage_state=str(config.BROWSER_STATE_PATH)
+                storage_state=str(config.BROWSER_STATE_PATH),
+                viewport=_VIEWPORT,
             )
             return _open_inbox(self._context)
 

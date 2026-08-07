@@ -16,12 +16,6 @@ class FakeLocator:
     def count(self) -> int:
         return len(self._page.visible_items())
 
-    def nth(self, index: int):
-        return self
-
-    def scroll_into_view_if_needed(self) -> None:
-        self._page.scroll()
-
 
 class FakePage:
     """Simula uma lista virtualizada que revela mais itens a cada scroll."""
@@ -30,6 +24,7 @@ class FakePage:
         self._pages = pages_of_items
         self._window = window
         self._revealed = 1
+        self.scroll_calls = 0
 
     def visible_items(self) -> list[dict]:
         # Só a "janela" mais recente continua renderizada, como na
@@ -37,13 +32,20 @@ class FakePage:
         revealed = self._pages[: self._revealed]
         return [item for page in revealed[-self._window :] for item in page]
 
-    def scroll(self) -> None:
-        self._revealed = min(self._revealed + 1, len(self._pages))
+    def _scroll(self) -> dict:
+        self.scroll_calls += 1
+        at_end = self._revealed >= len(self._pages)
+        if at_end:
+            return {"scrolled": False, "at_end": True}
+        self._revealed += 1
+        return {"scrolled": True, "at_end": self._revealed >= len(self._pages)}
 
     def locator(self, _selector):
         return FakeLocator(self)
 
-    def evaluate(self, _script, _selector=None):
+    def evaluate(self, script, _arg=None):
+        if "scrollTop" in script:
+            return self._scroll()
         return self.visible_items()
 
     def wait_for_timeout(self, _ms) -> None:
@@ -117,6 +119,42 @@ def test_scan_inbox_returns_nothing_when_list_is_empty():
     page = FakePage([[]])
 
     assert list(browser_client.scan_inbox(page)) == []
+
+
+def test_scan_inbox_actually_scrolls_the_list():
+    """Sem rolar, a varredura só veria a primeira tela da caixa."""
+    page = FakePage([[_item(0)], [_item(1)], [_item(2)]])
+
+    list(browser_client.scan_inbox(page))
+
+    assert page.scroll_calls > 0
+
+
+def test_scan_inbox_keeps_going_while_items_load_after_scroll_end():
+    """Chegar ao fim da barra não é o fim da lista — o Outlook carrega mais."""
+
+    class LazyLoadingPage(FakePage):
+        """A barra de rolagem já está no fim, mas itens continuam chegando."""
+
+        def __init__(self, first_batch, later_batches):
+            super().__init__([first_batch])
+            self._batches = later_batches
+            self._delivered = first_batch
+
+        def visible_items(self):
+            return self._delivered
+
+        def _scroll(self):
+            self.scroll_calls += 1
+            if self._batches:
+                self._delivered = self._batches.pop(0)
+            return {"scrolled": False, "at_end": True}
+
+    page = LazyLoadingPage([_item(0)], [[_item(1)], [_item(2)]])
+
+    messages = list(browser_client.scan_inbox(page))
+
+    assert [m["conv_id"] for m in messages] == ["conv-0", "conv-1", "conv-2"]
 
 
 def test_scan_inbox_terminates_when_items_have_no_conv_id():

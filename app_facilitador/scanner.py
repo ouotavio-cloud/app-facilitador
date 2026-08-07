@@ -50,9 +50,16 @@ def scan(
     um item problemático não pode derrubar a execução inteira).
     """
     result = ScanResult()
+    last_reported = 0
 
     def report_progress(count: int) -> None:
-        if count and count % progress_every == 0:
+        # Comparar com o último valor impresso, e não testar `count %
+        # progress_every`: cada scroll traz vários e-mails de uma vez, então
+        # o contador pula números e um teste de múltiplo exato quase nunca
+        # dispararia.
+        nonlocal last_reported
+        if count - last_reported >= progress_every:
+            last_reported = count
             print(f"  ... {count} e-mails percorridos")
 
     with storage.connect() as connection:
