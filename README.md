@@ -25,25 +25,58 @@ Abre uma janela do navegador. Faça login normalmente com sua conta Microsoft at
 
 > No Windows, use o **PowerShell** comum, não o PowerShell ISE — o ISE não repassa o Enter para o script e a espera do login trava.
 
-### 2. Varredura da caixa de entrada
+### 2. Cadastrar os processos que você acompanha
 
 ```bash
-python scripts/scan_inbox.py              # varre a caixa inteira
-python scripts/scan_inbox.py --limite 50  # para depois de 50 e-mails
-python scripts/scan_inbox.py --sem-janela # sem abrir a janela do navegador
+python scripts/processos.py            # modo interativo
+python scripts/processos.py --listar
+python scripts/processos.py --remover SUP.2026-197
 ```
 
-Percorre a caixa rolando a lista (o Outlook Web só mantém no DOM os itens visíveis, então a varredura precisa rolar para alcançar o histórico), procura o código do processo de cotação (`SUP.AAAA-NNN`) e registra tudo em `app_facilitador.db`. Ao final imprime um resumo com quantos e-mails foram percorridos, quantos são novos e quais códigos apareceram.
+Informe o código de cada cotação (`SUP.AAAA-NNN`) e, opcionalmente, o nome da obra. A busca procura cada processo **das duas formas** — pelo código e pelo nome da obra — porque uma reforça a outra: quando o fornecedor escreve o código de um jeito inesperado, o nome da obra no assunto ainda identifica o processo.
+
+O código digitado é normalizado, então tanto faz escrever `SUP.2026-197`, `sup 2026 197` ou `SUP2026197`.
+
+### 3. Varredura
+
+```bash
+python scripts/scan_inbox.py                      # Caixa de Entrada inteira
+python scripts/scan_inbox.py --limite 50          # para depois de 50 e-mails
+python scripts/scan_inbox.py --pasta "caixa real" # outra pasta
+python scripts/scan_inbox.py --sem-janela         # sem abrir a janela
+```
+
+Percorre a pasta rolando a lista (o Outlook Web só mantém no DOM os itens visíveis, então alcançar o histórico exige rolar), identifica os processos cadastrados e registra tudo em `app_facilitador.db`.
+
+O resumo separa duas coisas: os **processos identificados** (que você cadastrou) e os **códigos vistos mas não cadastrados** — assim uma cotação que você esqueceu de registrar aparece como pendência em vez de sumir.
 
 Rodar duas vezes não duplica nada: o controle é por `conv_id` da conversa.
 
-### 3. Conferir a extração
+Para descobrir os nomes exatos das pastas:
+
+```bash
+python scripts/list_folders.py
+```
+
+### 4. Ver o que foi encontrado
+
+```bash
+python scripts/show_results.py
+```
+
+Lista os e-mails identificados, indicando por qual pista cada processo foi reconhecido (código, obra, ou ambos) — sem precisar abrir o navegador.
+
+### Conferir a extração
 
 ```bash
 python scripts/browser_list_inbox.py
 ```
 
 Mostra os e-mails visíveis já com remetente, assunto, data e preview separados — útil para verificar rapidamente se a leitura da tela continua correta.
+
+## Limitação atual da detecção
+
+A busca cobre hoje o **assunto e o preview** que aparecem na lista de e-mails. Se o código do processo estiver apenas dentro do anexo (ou no meio do corpo, fora do trecho do preview), ele ainda não é encontrado — abrir cada mensagem e ler os anexos é o próximo passo do roadmap.
 
 ## Testes
 

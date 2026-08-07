@@ -64,6 +64,77 @@ def test_list_messages_with_codes_groups_multiple_codes(connection):
     assert sorted(matches[0]["codes"]) == ["SUP.2026-197", "SUP.2026-198"]
 
 
+def test_add_and_list_processes(connection):
+    storage.add_process(connection, "SUP.2026-197", "Sabesp Lote 4")
+    storage.add_process(connection, "SUP.2026-198", None)
+
+    processes = storage.list_processes(connection)
+
+    assert [p["code"] for p in processes] == ["SUP.2026-197", "SUP.2026-198"]
+    assert processes[0]["obra"] == "Sabesp Lote 4"
+    assert processes[1]["obra"] is None
+
+
+def test_readding_process_updates_the_obra(connection):
+    """Permite corrigir um cadastro sem apagar e recriar."""
+    storage.add_process(connection, "SUP.2026-197", "nome errado")
+    storage.add_process(connection, "SUP.2026-197", "Sabesp Lote 4")
+
+    processes = storage.list_processes(connection)
+
+    assert len(processes) == 1
+    assert processes[0]["obra"] == "Sabesp Lote 4"
+
+
+def test_remove_process(connection):
+    storage.add_process(connection, "SUP.2026-197", "Sabesp Lote 4")
+
+    assert storage.remove_process(connection, "SUP.2026-197") is True
+    assert storage.list_processes(connection) == []
+
+
+def test_remove_unknown_process_reports_false(connection):
+    assert storage.remove_process(connection, "SUP.2026-999") is False
+
+
+def test_matched_by_is_persisted(connection):
+    storage.save_message(
+        connection,
+        _message(),
+        ["SUP.2026-197"],
+        matched_by={"SUP.2026-197": "código, obra"},
+    )
+
+    match = storage.list_messages_with_codes(connection)[0]
+
+    assert match["matched_by"] == ["código, obra"]
+
+
+def test_multiple_codes_stay_aligned_with_their_clues(connection):
+    """As pistas contêm vírgula, então agrupá-las por vírgula desalinharia tudo."""
+    storage.save_message(
+        connection,
+        _message(),
+        ["SUP.2026-197", "SUP.2026-198"],
+        matched_by={"SUP.2026-197": "código, obra", "SUP.2026-198": "obra"},
+    )
+
+    match = storage.list_messages_with_codes(connection)[0]
+
+    assert dict(zip(match["codes"], match["matched_by"])) == {
+        "SUP.2026-197": "código, obra",
+        "SUP.2026-198": "obra",
+    }
+
+
+def test_code_without_matched_by_is_labelled_as_unregistered(connection):
+    storage.save_message(connection, _message(), ["SUP.2026-888"])
+
+    match = storage.list_messages_with_codes(connection)[0]
+
+    assert match["matched_by"] == ["não cadastrado"]
+
+
 def test_message_without_parsed_date_is_still_saved(connection):
     storage.save_message(connection, _message(received_at=None, received_at_raw="ontem"), [])
 

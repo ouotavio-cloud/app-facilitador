@@ -8,7 +8,9 @@ localmente para reaproveitar nas próximas execuções.
 
 from collections.abc import Callable, Iterator
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import BrowserContext, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 from app_facilitador import config, inbox_parser
 
@@ -102,6 +104,17 @@ _SCROLL_SETTLE_MS = 1_000
 # rodadas necessárias para percorrer uma caixa com milhares de conversas.
 _VIEWPORT = {"width": 1600, "height": 1200}
 
+# Usado para detectar que a lista trocou ao mudar de pasta.
+_JS_FIRST_CONV_ID = """
+selector => {
+    const el = document.querySelector(selector);
+    return el ? el.getAttribute('data-convid') : null;
+}
+"""
+
+# Pausa após trocar de pasta, dando tempo da nova lista assentar.
+_FOLDER_SETTLE_MS = 1_500
+
 
 def login_and_save_session() -> None:
     """Abre um navegador visível para o usuário logar manualmente uma vez."""
@@ -150,6 +163,68 @@ def _find_message_items(page: Page):
         if locator.count() > 0:
             return selector, locator
     return None, None
+
+
+def list_folders(page: Page) -> list[str]:
+    """Nomes das pastas de e-mail visíveis no painel de navegação.
+
+    Serve para o usuário descobrir o nome exato a passar em `open_folder`
+    — pastas criadas por ele têm nomes arbitrários ("caixa real") que o
+    código não tem como adivinhar.
+    """
+    names = page.evaluate(
+        """
+        () => Array.from(document.querySelectorAll('[role="treeitem"]'))
+            .map(el => (el.getAttribute('title') || el.textContent || '').trim())
+            .filter(name => name.length > 0)
+        """
+    )
+    # A árvore repete nomes quando uma pasta aparece também em Favoritos;
+    # dict.fromkeys remove as repetições preservando a ordem da tela.
+    return list(dict.fromkeys(names))
+
+
+def open_folder(page: Page, folder_name: str) -> None:
+    """Abre uma pasta pelo nome e espera a lista de e-mails trocar.
+
+    Levanta `RuntimeError` se a pasta não existir, em vez de varrer
+    silenciosamente a pasta errada.
+    """
+    item = page.get_by_role("treeitem", name=folder_name, exact=True).first
+    if item.count() == 0:
+        available = ", ".join(list_folders(page)) or "(nenhuma encontrada)"
+        raise RuntimeError(
+            f"Pasta {folder_name!r} não encontrada. Pastas disponíveis: {available}"
+        )
+
+    selector, _ = _find_message_items(page)
+    before = page.evaluate(_JS_FIRST_CONV_ID, selector) if selector else None
+
+    item.click()
+
+    # A troca de pasta não recarrega a página, então esperar por um
+    # seletor não basta: os itens da pasta anterior ainda estão lá. O
+    # sinal de que a nova lista chegou é o primeiro item ter mudado.
+    if selector is not None:
+        try:
+            page.wait_for_function(
+                """
+                ([selector, before]) => {
+                    const el = document.querySelector(selector);
+                    const current = el ? el.getAttribute('data-convid') : null;
+                    return current !== before;
+                }
+                """,
+                arg=[selector, before],
+                timeout=30_000,
+            )
+        except PlaywrightTimeoutError:
+            # Uma pasta vazia, ou uma cujo primeiro e-mail é o mesmo da
+            # anterior, não muda o primeiro item. Seguir em frente é
+            # melhor que abortar: a extração seguinte mostra o que há.
+            pass
+
+    page.wait_for_timeout(_FOLDER_SETTLE_MS)
 
 
 def list_visible_messages(page: Page) -> list[dict]:

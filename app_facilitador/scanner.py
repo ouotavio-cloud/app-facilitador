@@ -18,17 +18,26 @@ class ScanResult:
     new_messages: int = 0
     messages_with_codes: int = 0
     codes_found: dict[str, int] = field(default_factory=dict)
+    unknown_codes: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    folder: str | None = None
+    processes_tracked: int = 0
 
     def summary_lines(self) -> list[str]:
         lines = [
+            f"Pasta: {self.folder or 'Caixa de Entrada'}",
+            f"Processos acompanhados: {self.processes_tracked}",
             f"E-mails percorridos: {self.scanned}",
             f"Novos (ainda não registrados): {self.new_messages}",
-            f"Com código de processo: {self.messages_with_codes}",
+            f"Com processo identificado: {self.messages_with_codes}",
         ]
         if self.codes_found:
-            lines.append("Códigos encontrados:")
+            lines.append("Processos encontrados:")
             for code, count in sorted(self.codes_found.items()):
+                lines.append(f"  {code}: {count} e-mail(s)")
+        if self.unknown_codes:
+            lines.append("Códigos vistos mas NÃO cadastrados (vale conferir):")
+            for code, count in sorted(self.unknown_codes.items()):
                 lines.append(f"  {code}: {count} e-mail(s)")
         if self.errors:
             lines.append(f"Itens com erro (ignorados): {len(self.errors)}")
@@ -41,15 +50,18 @@ def scan(
     max_messages: int | None = None,
     progress_every: int = 100,
     headless: bool = False,
+    folder: str | None = None,
 ) -> ScanResult:
-    """Percorre a caixa de entrada e registra o que encontrar.
+    """Percorre uma pasta de e-mail e registra o que encontrar.
 
+    `folder` escolhe a pasta a varrer (padrão: a Caixa de Entrada). Vale
+    tanto para pastas do Outlook quanto para pastas criadas pelo usuário.
     `max_messages` limita a varredura (útil para testar sem esperar a
     caixa inteira). Um erro em um item não interrompe a varredura: é
     registrado em `ScanResult.errors` e o processamento segue (Fase 6 —
     um item problemático não pode derrubar a execução inteira).
     """
-    result = ScanResult()
+    result = ScanResult(folder=folder)
     last_reported = 0
 
     def report_progress(count: int) -> None:
@@ -63,31 +75,55 @@ def scan(
             print(f"  ... {count} e-mails percorridos")
 
     with storage.connect() as connection:
+        processes = storage.list_processes(connection)
+        result.processes_tracked = len(processes)
+
         with browser_client.open_inbox_session(headless=headless) as page:
+            if folder is not None:
+                browser_client.open_folder(page, folder)
+
             for message in browser_client.scan_inbox(
                 page, max_messages=max_messages, on_progress=report_progress
             ):
                 result.scanned += 1
                 try:
-                    codes = proposal_detector.find_proposal_codes(
-                        inbox_parser.searchable_text(message)
-                    )
-                    if storage.save_message(connection, message, codes):
-                        result.new_messages += 1
-                    if codes:
-                        result.messages_with_codes += 1
-                        for code in codes:
-                            result.codes_found[code] = result.codes_found.get(code, 0) + 1
+                    _process_message(connection, message, processes, result)
                 except Exception as error:  # noqa: BLE001 - um item ruim não pode parar a varredura
                     result.errors.append(f"{message.get('subject', '(sem assunto)')}: {error}")
 
     return result
 
 
-def run_and_report(max_messages: int | None = None, headless: bool = False) -> ScanResult:
+def _process_message(connection, message: dict, processes: list[dict], result: ScanResult) -> None:
+    text = inbox_parser.searchable_text(message)
+
+    matches = proposal_detector.match_known_processes(text, processes)
+    unknown = proposal_detector.find_unknown_codes(text, processes)
+
+    matched_by = {match["code"]: ", ".join(match["matched_by"]) for match in matches}
+    codes = list(matched_by) + unknown
+
+    if storage.save_message(connection, message, codes, matched_by=matched_by):
+        result.new_messages += 1
+
+    if matches:
+        result.messages_with_codes += 1
+        for match in matches:
+            code = match["code"]
+            result.codes_found[code] = result.codes_found.get(code, 0) + 1
+
+    for code in unknown:
+        result.unknown_codes[code] = result.unknown_codes.get(code, 0) + 1
+
+
+def run_and_report(
+    max_messages: int | None = None,
+    headless: bool = False,
+    folder: str | None = None,
+) -> ScanResult:
     """Executa a varredura e imprime o relatório final."""
-    print("Abrindo a caixa de entrada...")
-    result = scan(max_messages=max_messages, headless=headless)
+    print(f"Abrindo {folder or 'a Caixa de Entrada'}...")
+    result = scan(max_messages=max_messages, headless=headless, folder=folder)
 
     print("\n=== Resumo da varredura ===")
     for line in result.summary_lines():

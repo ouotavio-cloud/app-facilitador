@@ -13,14 +13,46 @@ def test_summary_lines_reports_counts():
 
     assert "E-mails percorridos: 120" in lines
     assert "Novos (ainda não registrados): 8" in lines
-    assert "Com código de processo: 3" in lines
+    assert "Com processo identificado: 3" in lines
     assert "  SUP.2026-197: 2 e-mail(s)" in lines
+
+
+def test_summary_lines_separates_unknown_codes():
+    """Um código não cadastrado é pendência do usuário, não um resultado."""
+    result = scanner.ScanResult(
+        scanned=50,
+        codes_found={"SUP.2026-197": 1},
+        unknown_codes={"SUP.2026-500": 2},
+    )
+
+    lines = result.summary_lines()
+
+    assert "Códigos vistos mas NÃO cadastrados (vale conferir):" in lines
+    assert "  SUP.2026-500: 2 e-mail(s)" in lines
+
+
+def test_summary_lines_reports_how_many_processes_are_tracked():
+    lines = scanner.ScanResult(scanned=10, processes_tracked=4).summary_lines()
+
+    assert "Processos acompanhados: 4" in lines
 
 
 def test_summary_lines_omits_code_section_when_nothing_found():
     lines = scanner.ScanResult(scanned=10).summary_lines()
 
     assert not any("Códigos encontrados" in line for line in lines)
+
+
+def test_summary_lines_names_the_scanned_folder():
+    lines = scanner.ScanResult(scanned=10, folder="caixa real").summary_lines()
+
+    assert "Pasta: caixa real" in lines
+
+
+def test_summary_lines_defaults_to_inbox_when_no_folder_given():
+    lines = scanner.ScanResult(scanned=10).summary_lines()
+
+    assert "Pasta: Caixa de Entrada" in lines
 
 
 def test_summary_lines_reports_errors():

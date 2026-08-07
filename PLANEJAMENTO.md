@@ -47,7 +47,7 @@ Estas são decisões de negócio que impactam a implementação e que assumo com
 | Ponto em aberto | Hipótese assumida |
 |---|---|
 | Onde ficam armazenadas as pastas Obra/Processo/Fornecedor | Localmente em uma pasta base, com opção futura de sincronizar com OneDrive/SharePoint |
-| Como o sistema sabe qual Obra/Processo corresponde a um processo de cotação enviado | Mantendo uma tabela de referência ("Processos") com código do processo, obra, fornecedores convidados e prazo — alimentada quando o usuário envia a cotação |
+| ~~Como o sistema sabe qual Obra/Processo corresponde a um processo de cotação enviado~~ **RESOLVIDO** | **O usuário informa.** Em vez de o sistema tentar adivinhar quais cotações existem, ele cadastra os processos que está acompanhando (código + nome da obra) em `scripts/processos.py`. A busca então usa as duas pistas de forma redundante — código e nome da obra — porque uma cobre a falha da outra. Ainda falta acrescentar prazo e fornecedores convidados ao cadastro. |
 | Como casar a resposta do fornecedor com o processo original | Pelo thread do e-mail (`In-Reply-To`/`References`) e/ou pelo código do processo citado no corpo/assunto |
 | O padrão `SUP.AAAA-NNN` é fixo ou varia por fornecedor | Regex configurável (lista de padrões), não fixo no código |
 | Reprocessar e-mails já varridos | Não — controle de estado por `message-id` processado, evitando duplicidade |
@@ -182,5 +182,10 @@ Componentes:
 5. **Fase 4 (relatório de fim de varredura) em versão inicial:** `scanner.run_and_report()` imprime quantos e-mails foram percorridos, quantos são novos, quais códigos apareceram e quantos itens deram erro. Falta o canal de notificação fora do terminal.
 6. **Estado local implementado** (`storage.py`, SQLite em `app_facilitador.db`): mensagens já vistas e códigos encontrados, garantindo idempotência entre execuções.
 
+7. **Tabela de Processos alimentada pelo usuário** (`scripts/processos.py`), resolvendo a premissa em aberto da seção 3. A busca casa cada processo por código **e** por nome da obra, e o relatório separa os processos identificados dos códigos vistos mas não cadastrados — para que uma cotação esquecida vire pendência visível em vez de sumir.
+8. **Navegação entre pastas** (`--pasta`), necessária porque o usuário mantém uma pasta própria ("caixa real") com os e-mails importantes, separada da Caixa de Entrada. Atende também o Bloco 2.1.
+
 ### Próximo passo em aberto
-Antes da Fase 3 (classificação Obra/Processo/Fornecedor e árvore de pastas), ainda é preciso confirmar com o usuário as premissas da seção 3 — principalmente **onde ficam as pastas** e **como a tabela de Processos é alimentada**, já que ambas definem o desenho do armazenamento.
+- **Ler corpo completo e anexos** (resto da Fase 2): a detecção hoje cobre assunto e preview. Propostas cujo código só aparece dentro do PDF ainda passam batido — é o pedaço que falta para o Bloco 1.3.
+- **Onde ficam as pastas de arquivamento** (premissa da seção 3 ainda em aberto): define o desenho da Fase 3 e precisa ser confirmado com o usuário antes de implementar a árvore `Obra / Processo / Fornecedor / Proposta`.
+- **Interface visual** (Fase 5): o cadastro de processos hoje é por terminal. O usuário pediu que o app pergunte os códigos numa interface visual — o CLI interativo atende a lógica, mas a tela em si ainda não existe.
