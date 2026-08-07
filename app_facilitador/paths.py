@@ -59,6 +59,23 @@ def data_dir() -> Path:
     return directory
 
 
+def configure_playwright_browsers() -> None:
+    """Aponta o Playwright para o navegador que veio junto do programa.
+
+    No executável o Chromium é distribuído dentro da própria pasta do app.
+    Sem esta variável o Playwright procuraria numa pasta do perfil do
+    usuário onde nada foi instalado — e o app é feito justamente para não
+    exigir instalação nenhuma.
+
+    Usa `setdefault` para não atropelar quem já apontou o Playwright para
+    outro lugar de propósito.
+    """
+    if is_frozen():
+        os.environ.setdefault(
+            "PLAYWRIGHT_BROWSERS_PATH", str(resource_dir() / "playwright-browsers")
+        )
+
+
 def _user_data_root() -> Path:
     """Raiz dos dados de aplicativo do usuário, conforme o sistema."""
     local_app_data = os.environ.get("LOCALAPPDATA")

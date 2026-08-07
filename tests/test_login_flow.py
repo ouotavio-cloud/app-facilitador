@@ -55,28 +55,14 @@ class _FakePage:
 
 
 class _FakeContext:
+    """Contexto persistente: é ele que guarda o perfil, sem navegador à parte."""
+
     def __init__(self, page):
-        self._page = page
-        self.estado_salvo_em = None
+        self.pages = [page]
+        self.fechado = False
 
     def new_page(self):
-        return self._page
-
-    def storage_state(self, path):
-        self.estado_salvo_em = path
-
-
-class _FakeBrowser:
-    def __init__(self, page, conectado=True):
-        self.context = _FakeContext(page)
-        self.fechado = False
-        self._conectado = conectado
-
-    def new_context(self, **kwargs):
-        return self.context
-
-    def is_connected(self):
-        return self._conectado
+        raise AssertionError("O perfil persistente já abre com uma aba")
 
     def close(self):
         self.fechado = True
@@ -85,7 +71,8 @@ class _FakeBrowser:
 @pytest.fixture
 def navegador_falso(tmp_path, monkeypatch):
     """Substitui o Playwright inteiro; nenhum navegador é aberto de verdade."""
-    monkeypatch.setattr(config, "BROWSER_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(config, "LOGIN_MARKER_PATH", tmp_path / ".conectado")
+    monkeypatch.setattr(config, "BROWSER_PROFILE_DIR", tmp_path / "navegador")
     # Espera instantânea: sem isto cada rodada custaria um segundo real.
     monkeypatch.setattr(browser_client, "LOGIN_POLL_MS", 1)
     monkeypatch.setattr(browser_client, "LOGIN_TIMEOUT_MS", 5)
@@ -93,8 +80,8 @@ def navegador_falso(tmp_path, monkeypatch):
     criados = {}
 
     def _fabricar(page):
-        browser = _FakeBrowser(page)
-        criados["browser"] = browser
+        context = _FakeContext(page)
+        criados["context"] = context
 
         class _FakePlaywright:
             def __enter__(self_inner):
@@ -104,21 +91,25 @@ def navegador_falso(tmp_path, monkeypatch):
                 return False
 
         monkeypatch.setattr(browser_client, "sync_playwright", lambda: _FakePlaywright())
-        monkeypatch.setattr(browser_client, "launch_browser", lambda pw, headless: browser)
-        return browser
+        monkeypatch.setattr(
+            browser_client, "open_browser_context", lambda pw, headless: context
+        )
+        return context
 
     criados["fabricar"] = _fabricar
     return criados
 
 
-def test_detecta_a_caixa_de_entrada_e_salva_o_acesso(navegador_falso, tmp_path):
+def test_detecta_a_caixa_de_entrada_e_registra_o_login(navegador_falso):
     page = _FakePage(rodadas_ate_a_caixa=2)
-    browser = navegador_falso["fabricar"](page)
+    context = navegador_falso["fabricar"](page)
 
     browser_client.login_and_save_session(on_status=lambda _: None)
 
-    assert browser.context.estado_salvo_em == str(config.BROWSER_STATE_PATH)
-    assert browser.fechado
+    assert config.LOGIN_MARKER_PATH.exists()
+    # Fechar o contexto é o que grava o perfil em disco; sem isso a conta
+    # não sobreviveria até a próxima execução.
+    assert context.fechado
 
 
 def test_traz_a_janela_de_login_para_a_frente(navegador_falso):
@@ -134,32 +125,33 @@ def test_traz_a_janela_de_login_para_a_frente(navegador_falso):
 def test_o_botao_ja_entrei_encerra_a_espera(navegador_falso):
     """O caso que travou de verdade: a caixa nunca é reconhecida."""
     page = _FakePage(rodadas_ate_a_caixa=None)
-    browser = navegador_falso["fabricar"](page)
+    context = navegador_falso["fabricar"](page)
 
     browser_client.login_and_save_session(
         on_status=lambda _: None, should_finish=lambda: True
     )
 
-    assert browser.context.estado_salvo_em is not None
+    assert config.LOGIN_MARKER_PATH.exists()
+    assert context.fechado
 
 
 def test_sem_deteccao_e_sem_confirmacao_o_tempo_esgota(navegador_falso):
     page = _FakePage(rodadas_ate_a_caixa=None)
-    browser = navegador_falso["fabricar"](page)
+    context = navegador_falso["fabricar"](page)
 
     with pytest.raises(RuntimeError, match="não foi concluído a tempo"):
         browser_client.login_and_save_session(on_status=lambda _: None)
 
-    assert browser.fechado
-    assert browser.context.estado_salvo_em is None
+    assert context.fechado
+    assert not config.LOGIN_MARKER_PATH.exists()
 
 
-def test_janela_que_fecha_na_hora_aponta_o_edge_ja_aberto(navegador_falso):
+def test_janela_que_fecha_na_hora_aponta_outra_copia_do_app(navegador_falso):
     """Sumir em segundos não é o usuário desistindo — a causa é outra."""
     page = _FakePage(rodadas_ate_a_caixa=None, fechada=True)
     navegador_falso["fabricar"](page)
 
-    with pytest.raises(RuntimeError, match="Edge já está aberto"):
+    with pytest.raises(RuntimeError, match="outra cópia do App"):
         browser_client.login_and_save_session(on_status=lambda _: None)
 
 
@@ -187,15 +179,6 @@ def test_janela_fechada_depois_de_um_tempo_e_tratada_como_desistencia(
         browser_client.login_and_save_session(on_status=lambda _: None)
 
 
-def test_navegador_que_morreu_tambem_e_percebido(navegador_falso):
-    page = _FakePage(rodadas_ate_a_caixa=None)
-    browser = navegador_falso["fabricar"](page)
-    browser._conectado = False
-
-    with pytest.raises(RuntimeError, match="Edge já está aberto"):
-        browser_client.login_and_save_session(on_status=lambda _: None)
-
-
 def test_redirecionamento_do_login_nao_e_confundido_com_janela_fechada(navegador_falso):
     """O caso que quebrou a v3 na máquina do usuário.
 
@@ -205,11 +188,11 @@ def test_redirecionamento_do_login_nao_e_confundido_com_janela_fechada(navegador
     redirect — antes mesmo de a pessoa digitar a senha.
     """
     page = _FakePage(rodadas_ate_a_caixa=1, rodadas_navegando=2)
-    browser = navegador_falso["fabricar"](page)
+    navegador_falso["fabricar"](page)
 
     browser_client.login_and_save_session(on_status=lambda _: None)
 
-    assert browser.context.estado_salvo_em is not None
+    assert config.LOGIN_MARKER_PATH.exists()
 
 
 def test_o_andamento_diz_em_que_pagina_o_navegador_esta(navegador_falso):

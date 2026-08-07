@@ -1,4 +1,4 @@
-# Compila o App Facilitador para Windows e publica o .exe para download.
+# Compila o App Facilitador para Windows e publica o download.
 #
 # A compilação precisa acontecer no Windows: o PyInstaller não faz
 # compilação cruzada — ele empacota o interpretador da máquina em que
@@ -21,6 +21,11 @@ jobs:
   compilar:
     runs-on: windows-latest
 
+    env:
+      # O Chromium é baixado para dentro do projeto, e não para a pasta
+      # padrão do perfil, para que o PyInstaller consiga empacotá-lo.
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\pw-browsers
+
     steps:
       - uses: actions/checkout@v4
 
@@ -40,30 +45,38 @@ jobs:
         # nenhum executável, porque o usuário perde tempo baixando.
         run: pytest -q
 
-      - name: Compilar o executável
+      - name: Baixar o Chromium que vai dentro do app
+        # O app usa este Chromium, e não o Edge do Windows: o Edge não
+        # preservava a conta do Outlook entre execuções na máquina do
+        # usuário, obrigando a logar de novo o tempo todo.
+        run: playwright install chromium
+
+      - name: Compilar
         run: pyinstaller --clean --noconfirm AppFacilitador.spec
 
-      - name: Verificar o executável gerado
-        # Compilar sem erro não prova que funciona: o modo --verificar sobe
-        # o painel de dentro do .exe e confirma que os templates e o CSS
-        # foram empacotados junto.
+      - name: Verificar o que foi gerado
+        # Compilar sem erro não prova que funciona. São duas provas
+        # diferentes: que o painel sobe (templates e CSS empacotados) e
+        # que o navegador abre (driver do Playwright e Chromium
+        # empacotados). Um app que só falha na segunda pareceria bom até
+        # a hora de conectar ao Outlook.
         run: |
           $env:APP_FACILITADOR_DATA = "$env:RUNNER_TEMP\dados-teste"
 
-          .\dist\AppFacilitador.exe --verificar
+          .\dist\AppFacilitador\AppFacilitador.exe --verificar
           if ($LASTEXITCODE -ne 0) { throw "O painel não subiu a partir do executável" }
 
-          # O runner do Windows tem Edge instalado, como a máquina do
-          # usuário: dá para provar aqui que o Playwright empacotado abre
-          # o navegador de verdade.
-          .\dist\AppFacilitador.exe --verificar-navegador
+          .\dist\AppFacilitador\AppFacilitador.exe --verificar-navegador
           if ($LASTEXITCODE -ne 0) { throw "O executável não conseguiu abrir o navegador" }
 
-      - name: Guardar o executável como artefato
+      - name: Compactar para download
+        run: Compress-Archive -Path dist\AppFacilitador -DestinationPath AppFacilitador-windows.zip
+
+      - name: Guardar como artefato
         uses: actions/upload-artifact@v4
         with:
           name: AppFacilitador-windows
-          path: dist/AppFacilitador.exe
+          path: AppFacilitador-windows.zip
           if-no-files-found: error
 
       - name: Publicar release para download
@@ -75,17 +88,21 @@ jobs:
         run: |
           $tag = "v$($env:GITHUB_RUN_NUMBER)"
           $notas = @'
-          Baixe o **AppFacilitador.exe** abaixo e dê dois cliques.
+          Baixe o **AppFacilitador-windows.zip** abaixo, **extraia a pasta** e
+          dê dois cliques em `AppFacilitador.exe` dentro dela.
 
-          Não precisa instalar Python nem nada além disso: o app usa o Microsoft Edge
-          que já vem no Windows para ler seu Outlook.
+          Não precisa instalar Python, nem navegador, nem nada: o Chromium que o
+          app usa vem junto. Por isso o zip é grande — e por isso ele é um zip e
+          não um `.exe` solto: num arquivo único o Windows precisaria descompactar
+          150 MB a cada abertura.
 
-          **Na primeira vez que abrir**, o Windows pode mostrar um aviso azul de
-          SmartScreen, porque o programa não tem assinatura digital paga. Clique em
+          **Na primeira vez**, o Windows pode mostrar um aviso azul de SmartScreen,
+          porque o programa não tem assinatura digital paga. Clique em
           **Mais informações** e depois em **Executar assim mesmo**.
 
           Depois, no painel, clique em **Conectar ao Outlook** e entre com sua conta
-          Microsoft. O acesso fica salvo e não precisa ser repetido.
+          Microsoft. O acesso fica guardado num perfil de navegador próprio do app,
+          então dura como duraria no seu navegador do dia a dia.
 
           Seus dados ficam em `%LOCALAPPDATA%\AppFacilitador` e não saem da sua máquina.
 
@@ -98,9 +115,9 @@ jobs:
           # a tag: nesse caso substituímos o anexo em vez de falhar.
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag dist/AppFacilitador.exe --clobber
+            gh release upload $tag AppFacilitador-windows.zip --clobber
           } else {
-            gh release create $tag dist/AppFacilitador.exe `
+            gh release create $tag AppFacilitador-windows.zip `
               --title "App Facilitador $tag" `
               --notes-file notas-release.md `
               --target $env:GITHUB_SHA

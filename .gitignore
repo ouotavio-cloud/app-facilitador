@@ -22,3 +22,10 @@ data/
 # Saídas da compilação do executável (PyInstaller)
 build/
 dist/
+
+# Chromium baixado pelo playwright para dentro do projeto na compilação
+pw-browsers/
+
+# Perfil do navegador e marcador de login (dados locais do usuário)
+navegador/
+.conectado

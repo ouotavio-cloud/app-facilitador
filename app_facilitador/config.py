@@ -28,7 +28,20 @@ GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 # política de TI e não há cache local legível do novo Outlook).
 OWA_URL = "https://outlook.office.com/mail/"
 OWA_CALENDAR_URL = "https://outlook.office.com/calendar/view/day"
-BROWSER_STATE_PATH = BASE_DIR / ".browser_state.json"
+
+# Perfil do navegador, guardado como o de um navegador comum.
+#
+# Antes salvávamos só um `storage_state.json` (cookies e localStorage), e
+# a conta parava de valer depois de pouco tempo: o login da Microsoft
+# guarda parte do que precisa em IndexedDB, que aquele arquivo não
+# captura. Um perfil de verdade preserva tudo, e a sessão dura o mesmo
+# que duraria num navegador normal.
+BROWSER_PROFILE_DIR = BASE_DIR / "navegador"
+
+# Marca que o login já foi feito. É um arquivo separado do perfil porque
+# a pasta do perfil passa a existir assim que o navegador abre uma vez,
+# mesmo que ninguém tenha logado.
+LOGIN_MARKER_PATH = BASE_DIR / ".conectado"
 
 # Reuniões lidas do calendário, guardadas para o painel abrir sem esperar
 # um navegador subir a cada carregamento da página.

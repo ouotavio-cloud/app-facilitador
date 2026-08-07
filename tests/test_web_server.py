@@ -16,7 +16,7 @@ from app_facilitador.web import server
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(config, "MEETINGS_CACHE_PATH", tmp_path / "meetings.json")
-    monkeypatch.setattr(config, "BROWSER_STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(config, "LOGIN_MARKER_PATH", tmp_path / ".conectado")
 
     app = server.create_app()
     app.config.update(TESTING=True)
@@ -184,7 +184,7 @@ def test_login_button_is_offered_when_there_is_no_session(client):
 
 
 def test_no_login_warning_once_the_session_exists(client):
-    config.BROWSER_STATE_PATH.write_text("{}", encoding="utf-8")
+    config.LOGIN_MARKER_PATH.write_text("{}", encoding="utf-8")
 
     page = _page(client)
 
@@ -194,7 +194,7 @@ def test_no_login_warning_once_the_session_exists(client):
 
 def test_login_status_reflects_a_session_saved_in_a_previous_run(client):
     """Quem conectou ontem continua conectado hoje, sem clicar em nada."""
-    config.BROWSER_STATE_PATH.write_text("{}", encoding="utf-8")
+    config.LOGIN_MARKER_PATH.write_text("{}", encoding="utf-8")
 
     assert client.get("/login/status").get_json()["connected"] is True
 

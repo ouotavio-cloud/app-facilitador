@@ -8,12 +8,13 @@ localmente para reaproveitar nas próximas execuções.
 
 import time
 from collections.abc import Callable, Iterator
+from datetime import datetime
 
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from app_facilitador import config, inbox_parser
+from app_facilitador import config, inbox_parser, paths
 
 # Seletores candidatos para os itens da lista de e-mails na caixa de
 # entrada do Outlook Web. Não há API estável para isso — é automação de
@@ -116,15 +117,6 @@ selector => {
 # Pausa após trocar de pasta, dando tempo da nova lista assentar.
 _FOLDER_SETTLE_MS = 1_500
 
-# Navegadores já instalados que serão usados, na ordem de preferência.
-#
-# O app é distribuído como um executável que não deve exigir instalação
-# de nada: usar o Edge — presente em qualquer Windows — evita baixar um
-# Chromium de ~150 MB e evita o passo `playwright install`. O Chromium
-# empacotado continua servindo de último recurso para quem roda pelo
-# código-fonte.
-_BROWSER_CHANNELS = ["msedge", "chrome"]
-
 # Quanto tempo o app espera o usuário concluir o login manual. Generoso
 # de propósito: pode haver autenticação em dois fatores, celular longe da
 # mesa, senha esquecida.
@@ -146,28 +138,49 @@ LOGIN_POLL_MS = 1_000
 _LOGIN_READY_SELECTORS = [*_MESSAGE_ITEM_SELECTORS, '[role="treeitem"]']
 
 
-def launch_browser(playwright, headless: bool):
-    """Abre o navegador, preferindo um já instalado na máquina.
+def open_browser_context(playwright, headless: bool):
+    """Abre o Chromium com o perfil persistente do app.
 
-    Tenta o Edge, depois o Chrome, e só então o Chromium que o Playwright
-    baixa à parte. Se nada funcionar, o erro precisa dizer o que tentou —
-    "falha ao abrir o navegador" sozinho não ajudaria ninguém a resolver.
+    **Chromium, e não o Edge instalado na máquina.** Chegamos a usar o Edge
+    para evitar 150 MB no download, e foi um erro: no Windows corporativo
+    ele não preservava a conta entre execuções — o usuário precisava logar
+    de novo o tempo todo — enquanto o Chromium mantinha. O Chromium passa a
+    ser distribuído dentro do app; o tamanho é o preço de um login que dura.
+
+    **Perfil persistente, e não `storage_state`.** Salvar cookies e
+    localStorage num arquivo perde o que o login da Microsoft guarda em
+    IndexedDB, e a sessão morria cedo. Um perfil de navegador de verdade
+    guarda tudo, e a conta dura o mesmo que duraria no navegador do dia a
+    dia.
+
+    Devolve um contexto (não um navegador): no modo persistente o
+    Playwright não expõe os dois separadamente.
     """
-    tentativas = []
+    paths.configure_playwright_browsers()
+    config.BROWSER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
-    for channel in [*_BROWSER_CHANNELS, None]:
-        try:
-            if channel is None:
-                return playwright.chromium.launch(headless=headless)
-            return playwright.chromium.launch(headless=headless, channel=channel)
-        except Exception as exc:  # noqa: BLE001 - qualquer falha é "não tem esse aqui"
-            nome = channel or "Chromium empacotado"
-            tentativas.append(f"{nome}: {str(exc).splitlines()[0]}")
+    try:
+        return playwright.chromium.launch_persistent_context(
+            str(config.BROWSER_PROFILE_DIR),
+            headless=headless,
+            viewport=_VIEWPORT,
+        )
+    except Exception as exc:  # noqa: BLE001 - sem navegador não há o que fazer
+        raise RuntimeError(
+            "Não foi possível abrir o navegador do app.\n"
+            f"Detalhe: {str(exc).splitlines()[0]}\n"
+            "Se você está rodando pelo código-fonte, falta executar: "
+            "playwright install chromium"
+        ) from exc
 
-    raise RuntimeError(
-        "Não foi possível abrir um navegador. Tentativas:\n  "
-        + "\n  ".join(tentativas)
-    )
+
+def first_page(context):
+    """A aba do contexto persistente, criada se ainda não houver nenhuma.
+
+    Um perfil persistente já abre com uma aba; criar outra deixaria uma
+    janela em branco sobrando na tela do usuário.
+    """
+    return context.pages[0] if context.pages else context.new_page()
 
 
 def _login_page_description(page: Page) -> str:
@@ -197,16 +210,16 @@ _RODADAS_CEDO_DEMAIS = 5
 def _mensagem_de_janela_fechada(rodada: int) -> str:
     """Explica o fechamento conforme quando ele aconteceu.
 
-    Fechar sozinho em segundos não é a mesma coisa que o usuário desistir
-    no meio, e a causa provável é outra: o Edge pode encerrar a janela nova
-    quando já há uma instância dele em execução na máquina.
+    Sumir em segundos não é a mesma coisa que desistir no meio do login, e
+    a causa provável é outra: uma cópia do app ainda aberta segurando o
+    mesmo perfil de navegador.
     """
     if rodada < _RODADAS_CEDO_DEMAIS:
         return (
             "A janela do navegador fechou sozinha logo depois de abrir, antes "
-            "de dar tempo de logar. Isso costuma acontecer quando o Microsoft "
-            "Edge já está aberto: feche todas as janelas do Edge e clique em "
-            "conectar de novo."
+            "de dar tempo de logar. Verifique se não há outra cópia do App "
+            "Facilitador aberta — duas ao mesmo tempo disputam o mesmo perfil "
+            "de navegador."
         )
     return (
         "A janela do navegador foi fechada antes do login terminar. "
@@ -241,9 +254,8 @@ def login_and_save_session(
             print(mensagem)
 
     with sync_playwright() as playwright:
-        browser = launch_browser(playwright, headless=False)
-        context = browser.new_context(viewport=_VIEWPORT)
-        page = context.new_page()
+        context = open_browser_context(playwright, headless=False)
+        page = first_page(context)
         page.goto(config.OWA_URL)
 
         # A janela nova costuma abrir atrás do painel, e o usuário fica
@@ -268,7 +280,7 @@ def login_and_save_session(
             # navegação levanta erro ("Execution context was destroyed")
             # sem que nada de errado tenha acontecido — tratar isso como
             # janela fechada abortava o login logo no primeiro redirect.
-            if page.is_closed() or not browser.is_connected():
+            if page.is_closed():
                 raise RuntimeError(_mensagem_de_janela_fechada(rodada))
 
             try:
@@ -291,18 +303,24 @@ def login_and_save_session(
             time.sleep(LOGIN_POLL_MS / 1000)
 
         if not concluido:
-            browser.close()
+            context.close()
             raise RuntimeError(
                 "O login não foi concluído a tempo. Clique em conectar de novo."
             )
 
-        context.storage_state(path=str(config.BROWSER_STATE_PATH))
-        browser.close()
+        # O acesso em si já está no perfil do navegador — fechar o contexto
+        # é o que garante que ele seja gravado em disco. Este arquivo só
+        # registra que houve login, porque a pasta do perfil existe desde a
+        # primeira vez que o navegador abriu, mesmo sem ninguém ter logado.
+        context.close()
+        config.LOGIN_MARKER_PATH.write_text(
+            datetime.now().isoformat(timespec="seconds"), encoding="utf-8"
+        )
         anunciar("Acesso ao Outlook salvo. Já pode rodar a varredura.")
 
 
 def _require_saved_session() -> None:
-    if not config.BROWSER_STATE_PATH.exists():
+    if not config.LOGIN_MARKER_PATH.exists():
         raise RuntimeError(
             "O app ainda não tem acesso ao seu Outlook. "
             "Clique em 'Conectar ao Outlook' no painel."
@@ -466,9 +484,9 @@ def scan_inbox(
 
 
 class _BrowserSession:
-    """Abre o navegador com a sessão salva e o fecha ao final.
+    """Abre o navegador com o perfil já logado e o fecha ao final.
 
-    Centraliza o arranjo de Playwright + estado de login, para que os
+    Centraliza o arranjo de Playwright + perfil persistente, para que os
     scripts, o scanner e o app não o repitam.
     """
 
@@ -479,12 +497,8 @@ class _BrowserSession:
 
     def __enter__(self) -> Page:
         self._playwright = sync_playwright().start()
-        self._browser = launch_browser(self._playwright, self._headless)
-        self._context = self._browser.new_context(
-            storage_state=str(config.BROWSER_STATE_PATH),
-            viewport=_VIEWPORT,
-        )
-        page = self._context.new_page()
+        self._context = open_browser_context(self._playwright, self._headless)
+        page = first_page(self._context)
         page.goto(self._url)
         # Esperamos por um elemento da tela, e não por
         # `wait_for_load_state("networkidle")`: o Outlook Web sincroniza em
@@ -494,7 +508,9 @@ class _BrowserSession:
         return page
 
     def __exit__(self, *exc_info) -> None:
-        self._browser.close()
+        # Fechar o contexto grava o perfil em disco: é o que mantém a conta
+        # válida para a próxima execução.
+        self._context.close()
         self._playwright.stop()
 
 

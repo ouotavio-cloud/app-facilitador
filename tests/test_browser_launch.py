@@ -1,74 +1,99 @@
-"""Escolha do navegador: usar o que já está instalado, não baixar um.
+"""Abertura do navegador: Chromium com perfil persistente.
 
-O app é distribuído como executável que não deve exigir preparo nenhum.
-Depender do Chromium que o Playwright baixa à parte quebraria essa
-premissa — daí preferir o Edge, presente em qualquer Windows.
+Duas decisões estão travadas aqui por terem custado retrabalho:
+
+- **Chromium, não o Edge instalado.** Usar o Edge economizava 150 MB no
+  download, mas no Windows corporativo do usuário ele não preservava a
+  conta entre execuções — era preciso logar de novo o tempo todo.
+- **Perfil persistente, não `storage_state`.** Salvar cookies e
+  localStorage num arquivo perde o que o login da Microsoft guarda em
+  IndexedDB, e a sessão morria cedo.
 """
 
 import pytest
 
-from app_facilitador import browser_client
+from app_facilitador import browser_client, config
 
 
 class _FakeChromium:
-    """Finge ser o `playwright.chromium`, aceitando só os canais informados."""
+    def __init__(self, falhar=False):
+        self.chamadas = []
+        self._falhar = falhar
 
-    def __init__(self, canais_disponiveis):
-        self._disponiveis = canais_disponiveis
-        self.tentativas = []
-
-    def launch(self, headless, channel=None):
-        self.tentativas.append(channel)
-        if channel not in self._disponiveis:
+    def launch_persistent_context(self, user_data_dir, **kwargs):
+        self.chamadas.append({"user_data_dir": user_data_dir, **kwargs})
+        if self._falhar:
             raise RuntimeError(
-                f"Executável não encontrado para {channel}\nlinha extra de ruído"
+                "Executable doesn't exist at /caminho/chromium\n"
+                "linha extra de ruído com instruções de instalação"
             )
-        return f"navegador:{channel}"
+        return "contexto"
+
+    # Presente de propósito: se alguém voltar a usar `launch`, os testes
+    # que checam o perfil persistente falham em vez de passar por acaso.
+    def launch(self, **kwargs):
+        raise AssertionError("O app precisa usar um perfil persistente")
 
 
 class _FakePlaywright:
-    def __init__(self, canais_disponiveis):
-        self.chromium = _FakeChromium(canais_disponiveis)
+    def __init__(self, falhar=False):
+        self.chromium = _FakeChromium(falhar)
 
 
-def test_prefere_o_edge_quando_disponivel():
-    playwright = _FakePlaywright({"msedge", "chrome", None})
-
-    resultado = browser_client.launch_browser(playwright, headless=True)
-
-    assert resultado == "navegador:msedge"
-    assert playwright.chromium.tentativas == ["msedge"]
+@pytest.fixture
+def perfil(tmp_path, monkeypatch):
+    destino = tmp_path / "navegador"
+    monkeypatch.setattr(config, "BROWSER_PROFILE_DIR", destino)
+    return destino
 
 
-def test_cai_para_o_chrome_quando_nao_ha_edge():
-    playwright = _FakePlaywright({"chrome", None})
+def test_abre_o_chromium_com_o_perfil_do_app(perfil):
+    playwright = _FakePlaywright()
 
-    resultado = browser_client.launch_browser(playwright, headless=True)
+    resultado = browser_client.open_browser_context(playwright, headless=True)
 
-    assert resultado == "navegador:chrome"
-
-
-def test_usa_o_chromium_empacotado_como_ultimo_recurso():
-    """Quem roda pelo código-fonte no Linux não tem Edge nem Chrome."""
-    playwright = _FakePlaywright({None})
-
-    resultado = browser_client.launch_browser(playwright, headless=True)
-
-    assert resultado == "navegador:None"
-    assert playwright.chromium.tentativas == ["msedge", "chrome", None]
+    assert resultado == "contexto"
+    assert playwright.chromium.chamadas[0]["user_data_dir"] == str(perfil)
 
 
-def test_sem_nenhum_navegador_o_erro_diz_o_que_foi_tentado():
-    """Um "falha ao abrir o navegador" seco não ajudaria a resolver nada."""
-    playwright = _FakePlaywright(set())
+def test_cria_a_pasta_do_perfil_na_primeira_vez(perfil):
+    assert not perfil.exists()
 
+    browser_client.open_browser_context(_FakePlaywright(), headless=True)
+
+    assert perfil.is_dir()
+
+
+def test_sem_navegador_o_erro_diz_como_resolver(perfil):
+    """Quem roda pelo código-fonte precisa saber que falta um comando."""
     with pytest.raises(RuntimeError) as erro:
-        browser_client.launch_browser(playwright, headless=True)
+        browser_client.open_browser_context(_FakePlaywright(falhar=True), headless=True)
 
     mensagem = str(erro.value)
-    assert "msedge" in mensagem
-    assert "chrome" in mensagem
-    assert "Chromium empacotado" in mensagem
-    # Só a primeira linha de cada falha: o erro do Playwright tem dezenas
-    # de linhas de instruções de instalação que aqui seriam ruído.
+    assert "playwright install chromium" in mensagem
+    # Só a primeira linha da falha do Playwright: o resto é ruído.
     assert "linha extra de ruído" not in mensagem
+
+
+class _FakeContextComAba:
+    def __init__(self, abas):
+        self.pages = abas
+        self.abas_criadas = 0
+
+    def new_page(self):
+        self.abas_criadas += 1
+        return "aba nova"
+
+
+def test_reaproveita_a_aba_que_o_perfil_ja_abre():
+    """Criar outra deixaria uma janela em branco sobrando na tela."""
+    contexto = _FakeContextComAba(["aba existente"])
+
+    assert browser_client.first_page(contexto) == "aba existente"
+    assert contexto.abas_criadas == 0
+
+
+def test_cria_uma_aba_quando_o_contexto_vem_vazio():
+    contexto = _FakeContextComAba([])
+
+    assert browser_client.first_page(contexto) == "aba nova"

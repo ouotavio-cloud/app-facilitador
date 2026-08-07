@@ -35,13 +35,13 @@ def _verificar() -> int:
 
 
 def _verificar_navegador() -> int:
-    """Confere que o Playwright empacotado consegue abrir um navegador.
+    """Confere que o Chromium empacotado abre a partir do executável.
 
     Separado da verificação do painel porque falha por outros motivos: o
-    driver do Playwright é um binário em Node.js que precisa ter sido
-    empacotado junto, e o navegador é o Edge instalado na máquina. Um
-    executável que mostra o painel mas não abre o navegador só quebraria
-    na hora de conectar ao Outlook — tarde demais.
+    driver do Playwright é um binário em Node.js, e o Chromium é uma pasta
+    de ~150 MB — os dois precisam ter sido empacotados junto. Um executável
+    que mostra o painel mas não abre o navegador só quebraria na hora de
+    conectar ao Outlook, tarde demais.
     """
     from playwright.sync_api import sync_playwright
 
@@ -49,15 +49,15 @@ def _verificar_navegador() -> int:
 
     try:
         with sync_playwright() as playwright:
-            navegador = browser_client.launch_browser(playwright, headless=True)
-            pagina = navegador.new_page()
+            contexto = browser_client.open_browser_context(playwright, headless=True)
+            pagina = browser_client.first_page(contexto)
             pagina.goto("about:blank")
-            navegador.close()
+            contexto.close()
     except Exception as erro:  # noqa: BLE001 - qualquer falha aqui reprova o build
         print(f"FALHA ao abrir o navegador: {erro}")
         return 1
 
-    print("OK: o navegador abre a partir do executável.")
+    print("OK: o Chromium empacotado abre a partir do executável.")
     return 0
 
 

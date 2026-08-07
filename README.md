@@ -4,14 +4,17 @@ App local para acompanhar propostas de fornecedores e organizar as tarefas do di
 
 ## Baixar e usar (Windows)
 
-1. Baixe o **`AppFacilitador.exe`** na [página de releases](../../releases/latest).
-2. Dê dois cliques.
+1. Baixe o **`AppFacilitador-windows.zip`** na [página de releases](../../releases/latest).
+2. Extraia a pasta.
+3. Dê dois cliques em **`AppFacilitador.exe`** dentro dela.
 
-Não precisa instalar Python, nem rodar `pip`, nem baixar navegador. O app usa o Microsoft Edge que já vem no Windows para ler seu Outlook.
+Não precisa instalar Python, nem rodar `pip`, nem baixar navegador: o Chromium que o app usa vem junto. É por isso que o download é grande, e por isso que é um zip e não um `.exe` solto — num arquivo único o Windows teria de descompactar 150 MB a cada abertura.
 
 Na primeira vez, o Windows pode mostrar um aviso azul de **SmartScreen** — o programa não tem assinatura digital paga. Clique em **Mais informações** → **Executar assim mesmo**.
 
-Abre uma janela preta (é o app rodando; feche-a para encerrar) e o painel no navegador. No painel, clique em **Conectar ao Outlook**: abre uma janela para você entrar com sua conta Microsoft, e o app detecta sozinho quando você terminou. Esse acesso fica salvo em `%LOCALAPPDATA%\AppFacilitador` e não precisa ser repetido.
+Abre uma janela preta (é o app rodando; feche-a para encerrar) e o painel no navegador. No painel, clique em **Conectar ao Outlook**: abre uma janela para você entrar com sua conta Microsoft, e o app detecta sozinho quando você terminou. Se ele não perceber, o botão **Já entrei** encerra a espera.
+
+O acesso fica guardado num perfil de navegador próprio do app, em `%LOCALAPPDATA%\AppFacilitador`, e dura o mesmo que duraria no seu navegador do dia a dia.
 
 ## O que o painel faz
 
@@ -61,7 +64,7 @@ Para desenvolver ou rodar fora do Windows:
 python -m venv .venv
 .venv\Scripts\activate        # Linux/Mac: source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium   # só se não houver Edge ou Chrome na máquina
+playwright install chromium
 python app.py
 ```
 
@@ -75,9 +78,14 @@ A compilação acontece sozinha no GitHub Actions a cada push (`.github/workflow
 
 ```bash
 pip install pyinstaller
+set PLAYWRIGHT_BROWSERS_PATH=%CD%\pw-browsers
+playwright install chromium
 pyinstaller --clean --noconfirm AppFacilitador.spec
-dist\AppFacilitador.exe --verificar
+dist\AppFacilitador\AppFacilitador.exe --verificar
+dist\AppFacilitador\AppFacilitador.exe --verificar-navegador
 ```
+
+O `PLAYWRIGHT_BROWSERS_PATH` é o que faz o Chromium cair dentro do projeto, onde o empacotador consegue incluí-lo. Sem esse passo o app compila, abre o painel e falha só na hora de conectar ao Outlook.
 
 ### Linha de comando
 

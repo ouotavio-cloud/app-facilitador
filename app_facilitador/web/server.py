@@ -83,7 +83,7 @@ def create_app() -> Flask:
             scanned_folders=scanned_folders,
             selected_folder=selected_folder or "",
             total_messages=total_messages,
-            has_session=config.BROWSER_STATE_PATH.exists(),
+            has_session=config.LOGIN_MARKER_PATH.exists(),
             meetings=meetings,
             resumo=_daily_summary(processes, proposals, meetings, total_messages),
             data_dir=str(config.BASE_DIR),
@@ -150,7 +150,7 @@ def create_app() -> Flask:
         # A verdade sobre estar conectado é o arquivo de sessão existir, e
         # não o resultado guardado desta execução: quem já conectou ontem
         # continua conectado hoje sem clicar em nada.
-        state["connected"] = state["connected"] or config.BROWSER_STATE_PATH.exists()
+        state["connected"] = state["connected"] or config.LOGIN_MARKER_PATH.exists()
         return jsonify(state)
 
     @app.get("/pastas")
