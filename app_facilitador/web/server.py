@@ -11,11 +11,11 @@ import os
 import threading
 from datetime import date
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 
 from app_facilitador import browser_client, calendar_client, config, deadlines, paths
 from app_facilitador import proposal_detector, storage
-from app_facilitador.web.jobs import LoginJob, ScanJob
+from app_facilitador.web.jobs import LoginJob, MeetingsJob, ScanJob
 
 HOST = "127.0.0.1"
 
@@ -27,6 +27,23 @@ PORT_ATTEMPTS = 20
 
 scan_job = ScanJob()
 login_job = LoginJob()
+meetings_job = MeetingsJob()
+
+
+def _browser_busy() -> str | None:
+    """O que está usando o navegador agora, ou None se estiver livre.
+
+    As três operações (conectar, varrer, ler o calendário) abrem uma
+    janela cada. Duas ao mesmo tempo disputariam a mesma sessão do
+    Outlook e uma atrapalharia a outra — melhor recusar e dizer por quê.
+    """
+    if login_job.state.running:
+        return "conectando ao Outlook"
+    if scan_job.state.running:
+        return "varrendo seus e-mails"
+    if meetings_job.state.running:
+        return "lendo seu calendário"
+    return None
 
 
 def create_app() -> Flask:
@@ -38,6 +55,10 @@ def create_app() -> Flask:
         template_folder=str(web_dir / "templates"),
         static_folder=str(web_dir / "static"),
     )
+    # Só assina os avisos temporários da tela. Sorteada a cada execução
+    # de propósito: não há sessão de usuário para preservar entre uma
+    # abertura do app e a seguinte.
+    app.secret_key = os.urandom(32)
 
     @app.route("/")
     def index():
@@ -92,6 +113,11 @@ def create_app() -> Flask:
 
     @app.post("/varredura")
     def start_scan():
+        ocupado = _browser_busy()
+        if ocupado:
+            flash(f"O app já está {ocupado}. Espere terminar e tente de novo.")
+            return redirect(url_for("index"))
+
         folder = (request.form.get("pasta") or "").strip() or None
         limit_raw = (request.form.get("limite") or "").strip()
         max_messages = int(limit_raw) if limit_raw.isdigit() else None
@@ -105,7 +131,17 @@ def create_app() -> Flask:
 
     @app.post("/login")
     def start_login():
+        ocupado = _browser_busy()
+        if ocupado:
+            flash(f"O app já está {ocupado}. Espere terminar e tente de novo.")
+            return redirect(url_for("index"))
+
         login_job.start()
+        return redirect(url_for("index"))
+
+    @app.post("/login/confirmar")
+    def confirm_login():
+        login_job.confirm()
         return redirect(url_for("index"))
 
     @app.get("/login/status")
@@ -128,11 +164,16 @@ def create_app() -> Flask:
 
     @app.post("/reunioes/atualizar")
     def refresh_meetings():
-        try:
-            calendar_client.refresh_meetings()
-        except Exception:  # noqa: BLE001 - a tela mostra o estado; não derruba o app
-            pass
+        ocupado = _browser_busy()
+        if ocupado:
+            flash(f"O app já está {ocupado}. Espere terminar e tente de novo.")
+        else:
+            meetings_job.start()
         return redirect(url_for("index"))
+
+    @app.get("/reunioes/status")
+    def meetings_status():
+        return jsonify(meetings_job.state.as_dict())
 
     @app.post("/encerrar")
     def shutdown():

@@ -129,6 +129,21 @@ _BROWSER_CHANNELS = ["msedge", "chrome"]
 # mesa, senha esquecida.
 LOGIN_TIMEOUT_MS = 10 * 60 * 1_000
 
+# De quanto em quanto tempo o app olha se o login já terminou. Um laço de
+# espera curta, em vez de um `wait_for_selector` longo, para que o botão
+# "Já entrei" da tela consiga interromper a espera e para que a janela
+# fechada no meio do caminho seja percebida na hora.
+LOGIN_POLL_MS = 1_000
+
+# Sinais de que o Outlook abriu e o login terminou.
+#
+# A árvore de pastas entra além da lista de e-mails porque é o marcador
+# mais confiável dos dois: ela existe mesmo numa caixa vazia e mesmo se o
+# Outlook abrir num aviso de boas-vindas, situações em que esperar por uma
+# linha de e-mail deixaria a conexão travada para sempre. A tela de login
+# da Microsoft não tem nenhum dos dois.
+_LOGIN_READY_SELECTORS = [*_MESSAGE_ITEM_SELECTORS, '[role="treeitem"]']
+
 
 def launch_browser(playwright, headless: bool):
     """Abre o navegador, preferindo um já instalado na máquina.
@@ -154,13 +169,44 @@ def launch_browser(playwright, headless: bool):
     )
 
 
-def login_and_save_session(on_status: Callable[[str], None] | None = None) -> None:
+def _login_page_description(page: Page) -> str:
+    """Onde o navegador está agora, em uma linha, para mostrar na tela.
+
+    Sem isto, um login que não é detectado vira uma espera muda: não dá
+    para saber se a pessoa ainda está na tela de senha, se caiu numa
+    verificação em dois fatores ou se a caixa de entrada abriu e o app é
+    que não a reconheceu.
+    """
+    try:
+        url = page.url
+    except Exception:  # noqa: BLE001 - página fechada ou navegando
+        return "página desconhecida"
+
+    if "login.microsoftonline.com" in url or "login.live.com" in url:
+        return "tela de login da Microsoft"
+    if "outlook.office.com" in url or "outlook.office365.com" in url:
+        return "Outlook aberto"
+    return url.split("?")[0][:80]
+
+
+def login_and_save_session(
+    on_status: Callable[[str], None] | None = None,
+    should_finish: Callable[[], bool] | None = None,
+) -> None:
     """Abre um navegador visível para o usuário logar manualmente uma vez.
 
     Não pede confirmação no teclado: o app compilado não tem terminal onde
     apertar Enter. O fim do login é detectado sozinho, quando a lista de
     e-mails aparece na tela — que é exatamente o sinal de que a sessão
     serve para o resto do app.
+
+    Mas a detecção automática não é confiável o bastante para ser o único
+    caminho: o Outlook pode abrir num aviso de boas-vindas, numa caixa
+    vazia, ou com uma estrutura de página que os seletores não reconhecem,
+    e aí a espera nunca terminaria. Por isso `should_finish` — ligado ao
+    botão "Já entrei" do painel — permite ao usuário encerrar a espera na
+    mão, e o laço curto (em vez de uma espera longa e bloqueante) é o que
+    torna essa interrupção possível.
     """
 
     def anunciar(mensagem: str) -> None:
@@ -175,25 +221,46 @@ def login_and_save_session(on_status: Callable[[str], None] | None = None) -> No
         page = context.new_page()
         page.goto(config.OWA_URL)
 
-        anunciar(
-            "Faça login com sua conta Microsoft na janela que abriu. "
-            "Assim que sua caixa de entrada aparecer, o app salva o acesso "
-            "e fecha a janela sozinho."
-        )
-
+        # A janela nova costuma abrir atrás do painel, e o usuário fica
+        # olhando para "aguardando login" sem ver onde logar.
         try:
-            page.wait_for_selector(
-                ", ".join(_MESSAGE_ITEM_SELECTORS), timeout=LOGIN_TIMEOUT_MS
+            page.bring_to_front()
+        except Exception:  # noqa: BLE001 - detalhe cosmético, não vale abortar
+            pass
+
+        seletor = ", ".join(_LOGIN_READY_SELECTORS)
+        rodadas = LOGIN_TIMEOUT_MS // LOGIN_POLL_MS
+        concluido = False
+
+        for _ in range(rodadas):
+            if should_finish is not None and should_finish():
+                concluido = True
+                break
+
+            try:
+                if page.query_selector(seletor) is not None:
+                    concluido = True
+                    break
+                onde = _login_page_description(page)
+                page.wait_for_timeout(LOGIN_POLL_MS)
+            except Exception as exc:  # noqa: BLE001 - janela fechada pelo usuário
+                browser.close()
+                raise RuntimeError(
+                    "A janela do navegador foi fechada antes do login terminar. "
+                    "Clique em conectar de novo."
+                ) from exc
+
+            anunciar(
+                f"Aguardando o login na janela do navegador — ela pode estar "
+                f"atrás desta. Agora em: {onde}. "
+                "Se sua caixa de entrada já apareceu lá, clique em 'Já entrei'."
             )
-        except PlaywrightTimeoutError:
+
+        if not concluido:
             browser.close()
             raise RuntimeError(
                 "O login não foi concluído a tempo. Clique em conectar de novo."
-            ) from None
-        except Exception as exc:  # noqa: BLE001 - janela fechada no meio do caminho
-            raise RuntimeError(
-                "A janela do navegador foi fechada antes do login terminar."
-            ) from exc
+            )
 
         context.storage_state(path=str(config.BROWSER_STATE_PATH))
         browser.close()

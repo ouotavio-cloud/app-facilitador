@@ -472,6 +472,8 @@ code {
   line-height: 1.7;
 }
 
+.erro-inline { color: var(--vencido); }
+
 .oculto { display: none; }
 
 /* ---------- tela de encerramento ---------- */

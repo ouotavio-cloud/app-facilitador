@@ -129,6 +129,7 @@ class LoginJob:
         self._lock = threading.Lock()
         self._state = LoginState()
         self._thread: threading.Thread | None = None
+        self._confirmed = threading.Event()
 
     @property
     def state(self) -> LoginState:
@@ -142,9 +143,19 @@ class LoginJob:
                 return False
             self._state = LoginState(running=True, message="Abrindo o navegador…")
 
+        self._confirmed.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         return True
+
+    def confirm(self) -> None:
+        """O usuário afirma que já entrou; salva o acesso sem mais esperar.
+
+        A detecção automática cobre o caso normal, mas quando ela não
+        reconhece a caixa de entrada o usuário ficaria preso numa espera
+        que nunca acaba. Aqui ele decide.
+        """
+        self._confirmed.set()
 
     def _run(self) -> None:
         # Importado aqui, e não no topo, para o painel abrir mesmo numa
@@ -153,7 +164,10 @@ class LoginJob:
         from app_facilitador import browser_client
 
         try:
-            browser_client.login_and_save_session(on_status=self._announce)
+            browser_client.login_and_save_session(
+                on_status=self._announce,
+                should_finish=self._confirmed.is_set,
+            )
             error = None
             connected = True
         except Exception as exc:  # noqa: BLE001 - a falha precisa chegar à tela
@@ -168,3 +182,64 @@ class LoginJob:
     def _announce(self, message: str) -> None:
         with self._lock:
             self._state.message = message
+
+
+@dataclass
+class MeetingsState:
+    """Situação da leitura do calendário."""
+
+    running: bool = False
+    error: str | None = None
+    finished_at: datetime | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "running": self.running,
+            "error": self.error,
+            "finished_at": self.finished_at.strftime("%H:%M:%S") if self.finished_at else None,
+        }
+
+
+class MeetingsJob:
+    """Lê as reuniões do dia numa thread separada.
+
+    Também abre um navegador, e por isso demora dezenas de segundos. Na
+    versão anterior isso acontecia dentro da requisição: a tela ficava
+    pendurada até terminar, e quando falhava — por não haver acesso ao
+    Outlook ainda — o erro era engolido e o clique simplesmente não fazia
+    nada visível.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = MeetingsState()
+        self._thread: threading.Thread | None = None
+
+    @property
+    def state(self) -> MeetingsState:
+        with self._lock:
+            return self._state
+
+    def start(self) -> bool:
+        with self._lock:
+            if self._state.running:
+                return False
+            self._state = MeetingsState(running=True)
+
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return True
+
+    def _run(self) -> None:
+        from app_facilitador import calendar_client
+
+        try:
+            calendar_client.refresh_meetings()
+            error = None
+        except Exception as exc:  # noqa: BLE001 - a falha precisa chegar à tela
+            error = str(exc)
+
+        with self._lock:
+            self._state.running = False
+            self._state.error = error
+            self._state.finished_at = datetime.now()

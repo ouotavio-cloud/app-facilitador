@@ -16,6 +16,7 @@ const botaoVarrer = document.getElementById("botao-varrer");
 const avisoLogin = document.getElementById("aviso-login");
 const avisoAndamento = document.getElementById("aviso-login-andamento");
 const mensagemLogin = document.getElementById("mensagem-login");
+const formJaEntrei = document.getElementById("form-ja-entrei");
 const botaoLogin = document.getElementById("botao-login");
 const pilulaConexao = document.getElementById("pilula-conexao");
 const textoConexao = document.getElementById("texto-conexao");
@@ -118,6 +119,9 @@ async function atualizarLogin() {
     mensagemLogin.textContent = textoAndamento;
   }
 
+  // A saída manual só faz sentido enquanto a espera está de pé.
+  formJaEntrei.classList.toggle("oculto", !estado.running);
+
   // Conectar muda a tela inteira: o aviso some e a varredura passa a
   // funcionar. Recarregar é o jeito mais simples de refletir isso.
   if (loginRodava && !estado.running && estado.connected) {
@@ -130,8 +134,32 @@ async function atualizarLogin() {
   }
 }
 
+let reunioesRodava = false;
+
+async function atualizarReunioes() {
+  const aviso = document.getElementById("status-reunioes");
+  if (!aviso) return;
+
+  let estado;
+  try {
+    estado = await consultar("/reunioes/status");
+  } catch {
+    return;
+  }
+
+  const texto = estado.running ? "lendo o calendário…" : estado.error;
+  aviso.textContent = texto || "";
+  aviso.classList.toggle("oculto", !texto);
+  aviso.classList.toggle("erro-inline", Boolean(estado.error));
+
+  if (reunioesRodava && !estado.running && !estado.error) {
+    window.location.reload();
+  }
+  reunioesRodava = estado.running;
+}
+
 async function atualizar() {
-  await Promise.all([atualizarVarredura(), atualizarLogin()]);
+  await Promise.all([atualizarVarredura(), atualizarLogin(), atualizarReunioes()]);
 }
 
 atualizar();

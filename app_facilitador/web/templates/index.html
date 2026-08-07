@@ -49,8 +49,17 @@
 </div>
 {% endif %}
 
+{% for mensagem in get_flashed_messages() %}
+<div class="aviso">
+  <p>{{ mensagem }}</p>
+</div>
+{% endfor %}
+
 <div class="aviso oculto" id="aviso-login-andamento">
   <p><span id="mensagem-login"></span></p>
+  <form method="post" action="{{ url_for('confirm_login') }}" id="form-ja-entrei" class="oculto">
+    <button type="submit">Já entrei</button>
+  </form>
 </div>
 
 <section class="resumo-dia">
@@ -163,6 +172,8 @@
         <button type="submit" class="botao-texto">atualizar</button>
       </form>
     </div>
+
+    <p id="status-reunioes" class="dica oculto"></p>
 
     {% if meetings.events %}
       {% if meetings.stale %}
