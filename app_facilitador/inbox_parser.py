@@ -76,6 +76,26 @@ def parse_message_row(raw: dict) -> dict:
     }
 
 
+# O Outlook anexa a contagem de itens ao rótulo de cada pasta no painel
+# de navegação: "caixa real - 4.410 itens (2 não lidos)". Esse sufixo muda
+# a cada e-mail que chega, então precisa sair antes de comparar nomes.
+_FOLDER_COUNT_SUFFIX = re.compile(r"\s+-\s+[\d.,]+\s+ite(?:m|ns)\b.*$", re.IGNORECASE)
+
+
+def clean_folder_name(raw_name: str) -> str:
+    """Remove a contagem de itens do rótulo de uma pasta."""
+    return _FOLDER_COUNT_SUFFIX.sub("", raw_name.strip()).strip()
+
+
+def normalize_folder_name(name: str) -> str:
+    """Forma canônica para comparar nomes de pasta digitados pelo usuário.
+
+    Case-insensitive e com espaços colapsados, para que "Caixa Real" e
+    "caixa  real" encontrem a pasta "caixa real".
+    """
+    return " ".join(name.lower().split())
+
+
 def searchable_text(message: dict) -> str:
     """Junta os campos onde faz sentido procurar o código do processo.
 

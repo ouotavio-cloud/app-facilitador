@@ -165,23 +165,27 @@ def _find_message_items(page: Page):
     return None, None
 
 
-def list_folders(page: Page) -> list[str]:
-    """Nomes das pastas de e-mail visíveis no painel de navegação.
-
-    Serve para o usuário descobrir o nome exato a passar em `open_folder`
-    — pastas criadas por ele têm nomes arbitrários ("caixa real") que o
-    código não tem como adivinhar.
-    """
-    names = page.evaluate(
+def _raw_folder_names(page: Page) -> list[str]:
+    return page.evaluate(
         """
         () => Array.from(document.querySelectorAll('[role="treeitem"]'))
             .map(el => (el.getAttribute('title') || el.textContent || '').trim())
             .filter(name => name.length > 0)
         """
     )
+
+
+def list_folders(page: Page) -> list[str]:
+    """Nomes das pastas de e-mail visíveis no painel de navegação.
+
+    Serve para o usuário descobrir o nome a passar em `open_folder` —
+    pastas criadas por ele têm nomes arbitrários ("caixa real") que o
+    código não tem como adivinhar.
+    """
+    names = [inbox_parser.clean_folder_name(raw) for raw in _raw_folder_names(page)]
     # A árvore repete nomes quando uma pasta aparece também em Favoritos;
     # dict.fromkeys remove as repetições preservando a ordem da tela.
-    return list(dict.fromkeys(names))
+    return list(dict.fromkeys(name for name in names if name))
 
 
 def open_folder(page: Page, folder_name: str) -> None:
@@ -190,8 +194,22 @@ def open_folder(page: Page, folder_name: str) -> None:
     Levanta `RuntimeError` se a pasta não existir, em vez de varrer
     silenciosamente a pasta errada.
     """
-    item = page.get_by_role("treeitem", name=folder_name, exact=True).first
-    if item.count() == 0:
+    # Não dá para casar pelo nome exato do elemento: o Outlook anexa a
+    # contagem de itens ao rótulo da pasta ("caixa real - 4.410 itens
+    # (2 não lidos)"), que muda a cada e-mail que chega. Comparamos o
+    # nome limpo de cada item da árvore.
+    wanted = inbox_parser.normalize_folder_name(folder_name)
+    tree_items = page.get_by_role("treeitem")
+
+    item = None
+    for index in range(tree_items.count()):
+        candidate = tree_items.nth(index)
+        raw = candidate.get_attribute("title") or candidate.inner_text()
+        if inbox_parser.normalize_folder_name(inbox_parser.clean_folder_name(raw)) == wanted:
+            item = candidate
+            break
+
+    if item is None:
         available = ", ".join(list_folders(page)) or "(nenhuma encontrada)"
         raise RuntimeError(
             f"Pasta {folder_name!r} não encontrada. Pastas disponíveis: {available}"
