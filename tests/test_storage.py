@@ -139,3 +139,37 @@ def test_message_without_parsed_date_is_still_saved(connection):
     storage.save_message(connection, _message(received_at=None, received_at_raw="ontem"), [])
 
     assert storage.count_messages(connection) == 1
+
+
+def _registra_anexo(connection, conv_id, path, error=None):
+    storage.save_message(connection, _message(conv_id=conv_id), [])
+    storage.record_attachment(
+        connection,
+        conv_id=conv_id,
+        filename="Proposta.pdf",
+        path=str(path) if path else None,
+        code="SUP.2026-197",
+        supplier="Aciotubos",
+        error=error,
+    )
+
+
+def test_downloaded_on_disk_counts_only_files_that_still_exist(connection, tmp_path):
+    """A conversa só conta como baixada se o arquivo continua na pasta."""
+    presente = tmp_path / "presente.pdf"
+    presente.write_text("x", encoding="utf-8")
+    _registra_anexo(connection, "conv-presente", presente)
+
+    ausente = tmp_path / "apagado.pdf"  # nunca criado: simula arquivo apagado
+    _registra_anexo(connection, "conv-apagado", ausente)
+
+    na_pasta = storage.downloaded_conversations_on_disk(connection)
+
+    assert "conv-presente" in na_pasta
+    assert "conv-apagado" not in na_pasta
+
+
+def test_downloaded_on_disk_ignores_failed_downloads(connection, tmp_path):
+    _registra_anexo(connection, "conv-falha", None, error="não deu")
+
+    assert storage.downloaded_conversations_on_disk(connection) == set()

@@ -122,7 +122,9 @@ def scan(
     with storage.connect() as connection:
         processes = storage.list_processes(connection)
         result.processes_tracked = len(processes)
-        ja_baixados = storage.downloaded_conversations(connection)
+        # Ciente do disco: se o usuário apagou uma proposta da pasta, ela
+        # não conta como baixada e a varredura a traz de volta.
+        ja_baixados = storage.downloaded_conversations_on_disk(connection)
         pasta_propostas = proposals_dir(connection)
 
         with browser_client.open_inbox_session(headless=headless) as page:
@@ -255,7 +257,9 @@ def _download_proposal(
     destino_dir.mkdir(parents=True, exist_ok=True)
 
     for nome in arquivos:
-        destino = attachments.unique_path(destino_dir / attachments.file_name_for(nome))
+        destino = attachments.unique_path(
+            destino_dir / attachments.proposal_file_name(fornecedor, nome)
+        )
         baixou = browser_client.download_attachment(page, nome, destino)
 
         storage.record_attachment(

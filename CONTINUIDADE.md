@@ -28,7 +28,9 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 |---|---|
 | 1.1 Identificar proposta pelo código `SUP.AAAA-NNN` | Pronto |
 | 1.2 Arquivar em Obra/Processo/Fornecedor | Pronto (v6) |
-| 1.3 Baixar o anexo, varrendo a caixa inteira | Calibrado (v8) para "Salvar como"; confirmar na máquina do usuário |
+| 1.3 Baixar o anexo, varrendo a caixa inteira | Pronto (v8), confirmado pelo usuário ("baixou os itens") |
+| Fornecedor no nome do arquivo | Pronto (v9) |
+| Não rebaixar se o arquivo já está na pasta (disco manda) | Pronto (v9) |
 | 1.4 Avisar ao terminar a varredura | Pronto (resumo na tela) |
 | Botão de parar a varredura | Pronto (v7) |
 | Interruptor "baixar anexos" (liga/desliga o download) | Pronto (v7) |

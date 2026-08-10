@@ -110,7 +110,7 @@ def test_baixa_a_proposta_na_arvore_obra_processo_fornecedor(outlook, tmp_path):
 
     esperado = (
         tmp_path / "Propostas" / "Sabesp Lote 4" / "SUP.2026-197" / "Aciotubos"
-        / "Orçamento.pdf"
+        / "Aciotubos - Orçamento.pdf"
     )
     assert esperado.exists()
     assert resultado.downloaded == 1
@@ -168,6 +168,27 @@ def test_varrer_de_novo_nao_rebaixa_o_que_ja_veio(outlook):
     assert resultado.downloaded == 0
 
 
+def test_apagar_o_arquivo_faz_baixar_de_novo(outlook, tmp_path):
+    """A pasta manda: se a proposta sumiu do disco, a varredura a traz de volta."""
+    _cadastrar("SUP.2026-197", "Sabesp Lote 4")
+    outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-197")]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]})
+    scanner.scan()
+
+    baixado = (
+        tmp_path / "Propostas" / "Sabesp Lote 4" / "SUP.2026-197" / "Aciotubos"
+        / "Aciotubos - Orçamento.pdf"
+    )
+    assert baixado.exists()
+    baixado.unlink()  # o usuário apagou a proposta da pasta
+
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]})
+    resultado = scanner.scan()
+
+    assert resultado.downloaded == 1
+    assert baixado.exists()
+
+
 def test_proposta_revisada_nao_apaga_a_anterior(outlook, tmp_path):
     _cadastrar("SUP.2026-197", "Sabesp Lote 4")
     outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-197")]
@@ -180,8 +201,8 @@ def test_proposta_revisada_nao_apaga_a_anterior(outlook, tmp_path):
     scanner.scan()
 
     pasta = tmp_path / "Propostas" / "Sabesp Lote 4" / "SUP.2026-197" / "Aciotubos"
-    assert (pasta / "Orçamento.pdf").exists()
-    assert (pasta / "Orçamento (2).pdf").exists()
+    assert (pasta / "Aciotubos - Orçamento.pdf").exists()
+    assert (pasta / "Aciotubos - Orçamento (2).pdf").exists()
 
 
 def test_falha_no_download_fica_registrada(outlook):
@@ -244,7 +265,7 @@ def test_processo_sem_obra_ainda_arquiva(outlook, tmp_path):
 
     assert (
         tmp_path / "Propostas" / "Sem obra" / "SUP.2026-197" / "Aciotubos"
-        / "Orçamento.pdf"
+        / "Aciotubos - Orçamento.pdf"
     ).exists()
 
 
@@ -258,4 +279,6 @@ def test_pasta_escolhida_pelo_usuario_e_respeitada(outlook, tmp_path):
     outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]})
     scanner.scan()
 
-    assert (escolhida / "Sem obra" / "SUP.2026-197" / "Aciotubos" / "Orçamento.pdf").exists()
+    assert (
+        escolhida / "Sem obra" / "SUP.2026-197" / "Aciotubos" / "Aciotubos - Orçamento.pdf"
+    ).exists()

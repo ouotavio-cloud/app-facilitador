@@ -43,9 +43,11 @@ Cada processo é procurado **das duas formas** — pelo código e pelo nome da o
 <pasta escolhida>/ Obra / Processo / Fornecedor / arquivo
 ```
 
-O **fornecedor** vem do domínio do e-mail (`comercial@aciotubos.com.br` → `Aciotubos`), não do nome de quem escreveu: no mês seguinte pode ser outra pessoa da mesma empresa respondendo, e as propostas precisam ficar juntas. Em e-mail pessoal (gmail e afins) o domínio não diz nada, e aí vale o nome do remetente.
+O **fornecedor** vem do domínio do e-mail (`comercial@aciotubos.com.br` → `Aciotubos`), não do nome de quem escreveu: no mês seguinte pode ser outra pessoa da mesma empresa respondendo, e as propostas precisam ficar juntas. Em e-mail pessoal (gmail e afins) o domínio não diz nada, e aí vale o nome do remetente. O nome do fornecedor entra também **no nome do arquivo** (`Aciotubos - Proposta Comercial.pdf`), para que a proposta continue identificada mesmo depois de sair da pasta — anexada de volta num e-mail ou jogada numa planilha de comparação.
 
-Logotipos e assinaturas não são baixados — só documentos (`.pdf`, `.xlsx`, `.docx`, `.dwg`, `.zip`…). Proposta revisada **não sobrescreve** a anterior: vira `Orçamento (2).pdf` ao lado da original, porque comparar as duas versões é parte do trabalho.
+Logotipos e assinaturas não são baixados — só documentos (`.pdf`, `.xlsx`, `.docx`, `.dwg`, `.zip`…). Proposta revisada **não sobrescreve** a anterior: vira `Aciotubos - Orçamento (2).pdf` ao lado da original, porque comparar as duas versões é parte do trabalho.
+
+A **pasta é a fonte da verdade**: antes de baixar, o app confere se a proposta já está lá. Se estiver, não baixa de novo (nem reabre o e-mail); se você tiver apagado o arquivo, a próxima varredura o traz de volta.
 
 Duas coisas a saber: para pegar o anexo o app precisa **abrir o e-mail**, o que o marca como lido no Outlook — por isso só e-mails de processos cadastrados são abertos, nunca a caixa inteira. E a pasta de destino é editável no painel; o padrão é `Documentos\App Facilitador\Propostas`, que em máquina corporativa costuma estar sincronizada com o OneDrive.
 

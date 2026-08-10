@@ -362,6 +362,29 @@ def downloaded_conversations(connection: sqlite3.Connection) -> set[str]:
     return {row["conv_id"] for row in rows}
 
 
+def downloaded_conversations_on_disk(connection: sqlite3.Connection) -> set[str]:
+    """Conversas já baixadas **e cujos arquivos ainda estão na pasta**.
+
+    O banco sozinho não basta: se o usuário apagou uma proposta da pasta, a
+    varredura tem de baixá-la de novo. Aqui o disco é que manda — uma
+    conversa só conta como "já baixada" se todos os arquivos que ela gerou
+    continuam existindo. Some um deles, a conversa volta a ser processada.
+    """
+    rows = connection.execute(
+        "SELECT conv_id, path FROM attachments WHERE error IS NULL AND path IS NOT NULL"
+    ).fetchall()
+
+    por_conversa: dict[str, list[str]] = {}
+    for row in rows:
+        por_conversa.setdefault(row["conv_id"], []).append(row["path"])
+
+    return {
+        conv_id
+        for conv_id, caminhos in por_conversa.items()
+        if all(Path(caminho).exists() for caminho in caminhos)
+    }
+
+
 def list_attachments(connection: sqlite3.Connection) -> list[dict]:
     """Propostas baixadas, das mais recentes para as mais antigas."""
     rows = connection.execute(

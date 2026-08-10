@@ -187,3 +187,34 @@ def file_name_for(filename: str) -> str:
 
     caminho = Path(bruto)
     return f"{sanitize(caminho.stem, fallback='proposta')}{caminho.suffix}"
+
+
+def proposal_file_name(supplier: str, filename: str) -> str:
+    """Nome da proposta prefixado com o fornecedor.
+
+    O arquivo já vai numa pasta com o nome do fornecedor, mas o nome
+    também precisa carregá-lo: uma proposta acaba saindo da pasta — anexada
+    de volta num e-mail, jogada numa planilha de comparação, mandada para o
+    engenheiro — e aí o nome sozinho tem que dizer de quem é. "Proposta.pdf"
+    solto não identifica ninguém; "Aciotubos - Proposta.pdf" sim.
+
+    Não repete o fornecedor quando o próprio arquivo já começa com ele, para
+    não gerar "Aciotubos - Aciotubos proposta.pdf".
+    """
+    limpo = file_name_for(filename)
+    caminho = Path(limpo)
+    miolo, extensao = caminho.stem, caminho.suffix
+
+    prefixo = sanitize(supplier, fallback="Fornecedor")
+
+    if normalize_for_comparison(miolo).startswith(normalize_for_comparison(prefixo)):
+        return limpo
+
+    nome = f"{prefixo} - {miolo}"
+    if len(nome) > _MAX_COMPONENT:
+        # Corta o miolo, nunca o fornecedor: é ele que dá sentido ao nome.
+        espaco = _MAX_COMPONENT - len(prefixo) - 3  # 3 = " - "
+        miolo_curto = miolo[:espaco].rstrip(". ") if espaco > 0 else ""
+        nome = f"{prefixo} - {miolo_curto}".rstrip(" -") if miolo_curto else prefixo[:_MAX_COMPONENT]
+
+    return f"{nome}{extensao}"

@@ -107,6 +107,39 @@ class TestNomesQueOWindowsAceita:
         assert attachments.file_name_for(".pdf") == "proposta.pdf"
 
 
+class TestNomeComFornecedor:
+    def test_prefixa_o_fornecedor(self):
+        """O nome sozinho precisa dizer de quem é a proposta."""
+        assert (
+            attachments.proposal_file_name("Aciotubos", "Proposta Comercial.pdf")
+            == "Aciotubos - Proposta Comercial.pdf"
+        )
+
+    def test_preserva_a_extensao(self):
+        nome = attachments.proposal_file_name("Angolini", "orçamento.xlsx")
+        assert nome.endswith(".xlsx")
+
+    def test_nao_repete_o_fornecedor_ja_presente(self):
+        """Evita 'Aciotubos - Aciotubos proposta.pdf'."""
+        nome = attachments.proposal_file_name("Aciotubos", "Aciotubos proposta.pdf")
+        assert nome == "Aciotubos proposta.pdf"
+
+    def test_ignora_acento_e_caixa_ao_comparar(self):
+        nome = attachments.proposal_file_name("Construção", "construcao final.pdf")
+        assert nome == "construcao final.pdf"
+
+    def test_fornecedor_vazio_ainda_gera_nome_valido(self):
+        nome = attachments.proposal_file_name("", "proposta.pdf")
+        assert nome == "Fornecedor - proposta.pdf"
+
+    def test_nome_final_respeita_o_limite(self):
+        nome = attachments.proposal_file_name("Fornecedor", "A" * 200 + ".pdf")
+        # O miolo (sem extensão) não pode estourar o teto por componente.
+        assert len(nome) - len(".pdf") <= 60
+        assert nome.startswith("Fornecedor - ")
+        assert nome.endswith(".pdf")
+
+
 class TestArvoreDePastas:
     def test_obra_processo_fornecedor(self, tmp_path):
         destino = attachments.proposal_dir(
