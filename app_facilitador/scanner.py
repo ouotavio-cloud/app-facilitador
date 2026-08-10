@@ -48,6 +48,9 @@ class ScanResult:
     # fiscal, contrato, habilitação) — não são abertos nem baixados.
     skipped_non_proposal: int = 0
     stopped: bool = False
+    # Pastas vazias levadas embora no fim da varredura — sobras das versões
+    # que criavam a árvore da proposta antes de saber se o download daria certo.
+    empty_dirs_removed: int = 0
     # Caminho de um HTML do painel de leitura salvo quando um download
     # falha — é o que permite calibrar os seletores sem outra compilação.
     debug_dump: str | None = None
@@ -76,6 +79,11 @@ class ScanResult:
             lines.append(
                 f"E-mails pulados por não serem proposta (nota/contrato/habilitação): "
                 f"{self.skipped_non_proposal}"
+            )
+        if self.empty_dirs_removed:
+            lines.append(
+                f"Pastas vazias removidas (sobra de downloads que falharam): "
+                f"{self.empty_dirs_removed}"
             )
         if self.download_failures:
             lines.append(f"Anexos que não deu para baixar: {self.download_failures}")
@@ -219,6 +227,11 @@ def scan(
                         f"anexo de {message.get('subject', '(sem assunto)')}: {error}"
                     )
 
+        # Varre a pasta de propostas no fim para levar embora as árvores
+        # vazias deixadas pelas versões anteriores do app, que criavam a
+        # pasta antes de o download dar certo.
+        result.empty_dirs_removed = attachments.remove_empty_dirs(pasta_propostas)
+
     _log.info(
         "varredura concluída — %d e-mails, %d baixados, %d falhas%s",
         result.scanned, result.downloaded, result.download_failures,
@@ -344,7 +357,10 @@ def _baixar_anexos_abertos(
     for item in selecionados:
         nome, fornecedor, tipo = item["filename"], item["supplier"], item["tipo"]
         destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
-        destino_dir.mkdir(parents=True, exist_ok=True)
+        # A pasta não é criada aqui: quem a cria é o download, depois de o
+        # arquivo já estar vindo (ver `browser_client.download_attachment`).
+        # Criá-la junto com o caminho deixava uma árvore vazia por cada
+        # download que falhava.
         destino = attachments.unique_path(
             destino_dir / attachments.proposal_file_name(fornecedor, nome)
         )

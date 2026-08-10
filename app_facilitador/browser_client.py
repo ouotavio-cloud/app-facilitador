@@ -509,49 +509,72 @@ _MESSAGE_OPEN_TIMEOUT_MS = 20_000
 # para sempre existe, mas é raro perto do de um seletor errado.
 _DOWNLOAD_START_TIMEOUT_MS = 20_000
 
-# Localiza os anexos pelo nome do arquivo, e não por classe de CSS.
+# Localiza os anexos do e-mail ABERTO, e só os dele.
 #
-# Toda a leitura do Outlook aqui depende de classes geradas pelo build da
-# Microsoft, que mudam sem aviso. Para anexos dá para fazer melhor: um
-# anexo é um elemento cujo rótulo termina em ".pdf", ".xlsx" e afins. Isso
-# sobrevive a mudança de layout, porque descreve o conteúdo e não a
-# aparência.
+# A versão anterior varria `[aria-label], [title]` da página inteira atrás
+# de qualquer rótulo terminado em ".pdf", ".xlsx" e afins, e subia daí até
+# achar um ancestral com botão. Parecia robusto — descreve o conteúdo, não
+# a aparência — e era a origem dos dois piores defeitos do app:
+#
+#   1. **Anexo do e-mail errado.** As linhas da lista de mensagens também
+#      exibem o nome dos arquivos que cada e-mail carrega. Varrendo a
+#      página toda, os anexos de OUTRAS conversas entravam na lista do
+#      e-mail aberto — e, como a lista vem antes do painel de leitura no
+#      DOM, era a linha da lista que acabava marcada.
+#   2. **E-mail fixado.** Marcada a linha da lista, o download procurava
+#      nela um acionador e caía no último botão da linha, que é "Manter
+#      esta mensagem na parte superior de sua pasta". Cada tentativa de
+#      baixar fixava um e-mail na caixa do usuário.
+#
+# Agora partimos do cartão do anexo, não do nome do arquivo. No Outlook do
+# usuário ele é `[role="option"]` dentro do `[role="listbox"]` de anexos, e
+# tem a setinha (˅) "Mais ações" que abre o menu com "Salvar como". As
+# linhas da lista de mensagens também são `[role="option"]` — o que as
+# separa, e foi conferido contra o HTML real (ver `dump_message_debug`), é
+# que linha de mensagem tem `data-convid` e nenhum `aria-haspopup`, e
+# cartão de anexo tem `aria-haspopup` e nenhum `data-convid`.
 _JS_FIND_ATTACHMENTS = """
 extensoes => {
+    // As marcas do e-mail anterior morrem aqui. Sem isto, o cartão de um
+    // e-mail já fechado continuaria marcado e o download seguinte clicaria
+    // nele — anexo de uma conversa gravado na pasta de outra.
+    for (const velho of document.querySelectorAll('[data-facilitador-anexo]')) {
+        velho.removeAttribute('data-facilitador-anexo');
+    }
+
+    const extensaoDe = nome => {
+        const ponto = nome.lastIndexOf('.');
+        return ponto < 0 ? '' : nome.slice(ponto).toLowerCase();
+    };
+
+    // O nome está no `title` de um filho do cartão ("Proposta.pdf") e, junto
+    // com ação e tamanho, no aria-label do cartão ("Proposta.pdf Abrir 300
+    // KB"). O `title` vem primeiro por ser o nome limpo; o aria-label é a
+    // reserva para layouts que não o tenham.
+    const nomeNoCartao = cartao => {
+        for (const filho of cartao.querySelectorAll('[title]')) {
+            const titulo = (filho.getAttribute('title') || '').trim();
+            if (titulo && extensoes.includes(extensaoDe(titulo))) return titulo;
+        }
+        const rotulo = (cartao.getAttribute('aria-label') || '').trim();
+        const casou = rotulo.match(/^(.+?\\.[A-Za-z0-9]{2,5})(?=$|\\s)/);
+        if (casou && extensoes.includes(extensaoDe(casou[1]))) return casou[1];
+        return null;
+    };
+
     const vistos = new Set();
     const achados = [];
 
-    for (const el of document.querySelectorAll('[aria-label], [title]')) {
-        const rotulo = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
-        if (!rotulo) continue;
+    for (const cartao of document.querySelectorAll('[role="option"]')) {
+        // `closest` e não `hasAttribute`: descarta a linha da lista de
+        // mensagens e também qualquer coisa renderizada dentro dela.
+        if (cartao.closest('[data-convid]')) continue;
+        if (!cartao.querySelector('[aria-haspopup]')) continue;
 
-        // O rótulo pode ser "Proposta.pdf" ou "Anexo Proposta.pdf, 240 KB".
-        const casou = rotulo.match(/([^\\\\/:*?"<>|\\s][^\\\\/:*?"<>|]*\\.[A-Za-z0-9]{2,5})(?=$|[,;\\s])/);
-        if (!casou) continue;
-
-        const arquivo = casou[1].trim();
-        const extensao = arquivo.slice(arquivo.lastIndexOf('.')).toLowerCase();
-        if (!extensoes.includes(extensao)) continue;
-
-        if (vistos.has(arquivo)) continue;
+        const arquivo = nomeNoCartao(cartao);
+        if (!arquivo || vistos.has(arquivo)) continue;
         vistos.add(arquivo);
 
-        // O rótulo com o nome costuma ser um span sem interação. O que o
-        // download precisa é do CARTÃO do anexo, que contém a setinha (˅)
-        // que abre o menu "Salvar como". Subimos do rótulo até o primeiro
-        // ancestral que tenha um acionador — mas SEM cruzar para regiões
-        // grandes (a barra da mensagem, o painel inteiro): passar disso faz
-        // o download achar o menu "..." da MENSAGEM ("Denunciar como lixo"),
-        // não o do anexo, e o clique erra o alvo.
-        let cartao = el;
-        for (let i = 0; i < 6 && cartao.parentElement; i++) {
-            const pai = cartao.parentElement;
-            const papelPai = pai.getAttribute('role') || '';
-            if (papelPai === 'toolbar' || papelPai === 'main'
-                || papelPai === 'region' || papelPai === 'document') break;
-            if (cartao.querySelector('[aria-haspopup], button, [role="button"], a[href]')) break;
-            cartao = pai;
-        }
         cartao.setAttribute('data-facilitador-anexo', arquivo);
         achados.push(arquivo);
     }
@@ -625,6 +648,37 @@ def read_message_body(page: Page) -> str:
         return ""
 
 
+def _localizar_anexo(page: Page, filename: str):
+    """O cartão do anexo, remarcando a página se a marca tiver sumido.
+
+    O Outlook remonta o painel de leitura por conta própria — uma imagem que
+    termina de carregar, a lista que se atualiza ao fundo — e a remontagem
+    leva junto os atributos que não são dele, inclusive a marca deixada por
+    `find_attachments`. Quando isso acontecia no meio de um e-mail, **todos**
+    os anexos seguintes falhavam de uma vez, no mesmo segundo, com "não foi
+    marcado na página": o app desistia de um e-mail inteiro por causa de uma
+    remontagem entre achar e baixar. Procurar de novo custa uma chamada ao
+    navegador e recupera o e-mail todo.
+    """
+    seletor = f'[data-facilitador-anexo="{filename}"]'
+
+    alvo = page.locator(seletor).first
+    if alvo.count() > 0:
+        return alvo
+
+    try:
+        page.evaluate(_JS_FIND_ATTACHMENTS, sorted(config_extensoes()))
+    except Exception:  # noqa: BLE001 - página navegando; nada a recuperar
+        return None
+
+    alvo = page.locator(seletor).first
+    if alvo.count() == 0:
+        return None
+
+    _log.info("marca de %r tinha sumido; remarquei a página", filename)
+    return alvo
+
+
 class _SemAcionador(Exception):
     """O botão/menu de baixar não foi encontrado — não há download a esperar.
 
@@ -650,9 +704,9 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
     seletor errado prendia o app pelo timeout inteiro a cada anexo — foi o
     que travava a varredura ao chegar numa proposta.
     """
-    alvo = page.locator(f'[data-facilitador-anexo="{filename}"]').first
-    if alvo.count() == 0:
-        _log.warning("anexo %r não foi marcado na página; não dá para baixar", filename)
+    alvo = _localizar_anexo(page, filename)
+    if alvo is None:
+        _log.warning("anexo %r não está na página; não dá para baixar", filename)
         return False
 
     try:
@@ -669,21 +723,44 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
             with page.expect_download(timeout=_DOWNLOAD_START_TIMEOUT_MS) as download:
                 if not tentativa(page, alvo):
                     raise _SemAcionador
+            # A pasta nasce agora, com o download já começado — e não antes,
+            # ao montar o caminho. Criá-la cedo enchia `Propostas` de árvores
+            # `Obra/Processo/Fornecedor` vazias toda vez que um download
+            # falhava: o usuário abria a pasta da proposta e não havia nada
+            # dentro, sem nada indicando que o arquivo nunca chegou.
+            destino.parent.mkdir(parents=True, exist_ok=True)
             download.value.save_as(str(destino))
             _log.info("baixou %r via %s", filename, tentativa.__name__)
             return True
         except _SemAcionador:
             _log.debug("%s: acionador não encontrado para %r", tentativa.__name__, filename)
+            _fechar_menu_aberto(page)
             continue
         except Exception as exc:  # noqa: BLE001 - timeout ou clique sem efeito; tenta a próxima forma
             _log.debug(
                 "%s falhou para %r: %s", tentativa.__name__, filename,
                 str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__,
             )
+            _fechar_menu_aberto(page)
             continue
 
     _log.warning("nenhum caminho de download funcionou para %r", filename)
     return False
+
+
+def _fechar_menu_aberto(page: Page) -> None:
+    """Fecha com Esc o menu que uma tentativa de download deixou aberto.
+
+    A setinha do anexo abre um menu que cobre a tela. Se o item "Salvar
+    como" não foi clicado — porque o menu não trouxe esse item, ou porque o
+    download não começou a tempo —, o menu fica aberto e intercepta os
+    cliques seguintes: o anexo seguinte falhava por estar atrás dele, e a
+    falha se propagava pelo resto do e-mail.
+    """
+    try:
+        page.keyboard.press("Escape")
+    except Exception:  # noqa: BLE001 - sem menu aberto, ou página navegando
+        pass
 
 
 # Rótulos do item de menu que salva o anexo em disco. "Salvar como" é o que
@@ -700,11 +777,17 @@ def _baixar_pelo_menu(page: Page, alvo) -> bool:
     de baixar visível, só um menu suspenso com Visualização, Abrir, Salvar
     no OneDrive, Copiar e Salvar como.
     """
-    # A setinha é um acionador de menu. Preferimos `aria-haspopup` (o que
-    # ela é), caindo para qualquer botão do cartão se não houver.
+    # Só `aria-haspopup` serve de acionador — é o que a setinha é.
+    #
+    # Havia aqui uma reserva: sem `aria-haspopup`, clicar no último botão do
+    # cartão. Ela é a causa do e-mail fixado. Quando o alvo não era um cartão
+    # de anexo (ver `_JS_FIND_ATTACHMENTS`), o último botão era "Manter esta
+    # mensagem na parte superior de sua pasta", e cada anexo que o app tentava
+    # baixar fixava um e-mail. Um clique às cegas em "o último botão que
+    # houver" não tem como ser seguro: numa linha de mensagem os botões são
+    # fixar, sinalizar e marcar como não lido. Sem setinha, é melhor não
+    # baixar do que mexer na caixa do usuário.
     gatilho = alvo.locator('[aria-haspopup]').first
-    if gatilho.count() == 0:
-        gatilho = alvo.locator("button").last
     if gatilho.count() == 0:
         return False
     gatilho.click(timeout=5_000)
@@ -722,17 +805,23 @@ def _baixar_pelo_menu(page: Page, alvo) -> bool:
 def _baixar_pelo_botao(page: Page, alvo) -> bool:
     """Botão de download que aparece sobre o anexo ao passar o mouse.
 
-    Reserva: alguns layouts do Outlook mostram um botão direto. Procura
-    primeiro dentro do cartão do anexo, depois na página inteira.
+    Reserva: alguns layouts do Outlook mostram um botão direto.
+
+    Procura **só dentro do cartão do anexo**. Antes procurava também na
+    página inteira, o que era pior que não achar nada: o painel de leitura
+    tem um "Baixar tudo" ao lado da lista de anexos, e um clique nele
+    salvaria o pacote inteiro com o nome do arquivo da vez — todos os anexos
+    do e-mail gravados como se fossem a proposta de um fornecedor. Fora do
+    cartão não existe botão que baixe este anexo, e sim vários que fazem
+    outra coisa.
     """
-    for escopo in (alvo, page):
-        botao = escopo.locator(
-            '[aria-label*="Baixar" i], [aria-label*="Download" i], '
-            '[title*="Baixar" i], [title*="Download" i]'
-        ).first
-        if botao.count() > 0:
-            botao.click(timeout=5_000)
-            return True
+    botao = alvo.locator(
+        '[aria-label*="Baixar" i], [aria-label*="Download" i], '
+        '[title*="Baixar" i], [title*="Download" i]'
+    ).first
+    if botao.count() > 0:
+        botao.click(timeout=5_000)
+        return True
     return False
 
 

@@ -315,6 +315,41 @@ def proposal_dir(base: Path, obra: str | None, code: str, supplier: str) -> Path
     )
 
 
+def remove_empty_dirs(base: Path) -> int:
+    """Apaga as pastas vazias sob `base` e devolve quantas saíram.
+
+    Limpeza das árvores `Obra/Processo/Fornecedor` que ficaram para trás
+    quando a pasta era criada antes do download e o download falhava. O
+    usuário abria `Propostas` e via a estrutura toda montada, sem um único
+    arquivo dentro — uma pasta vazia diz "a proposta está aqui" e mente.
+
+    Só apaga pasta **vazia**, nunca arquivo, então não há o que perder. A
+    própria `base` fica, mesmo vazia: é a pasta que o usuário escolheu e que
+    o painel abre.
+    """
+    if not base.is_dir():
+        return 0
+
+    # Do mais fundo para o mais raso, para que um pai que só continha pastas
+    # vazias fique vazio a tempo de sair na mesma passada. A lista é montada
+    # inteira antes de apagar qualquer coisa — percorrer a árvore enquanto
+    # ela encolhe daria resultado imprevisível.
+    de_baixo_para_cima = sorted(
+        base.rglob("*"), key=lambda caminho: len(caminho.parts), reverse=True
+    )
+
+    removidas = 0
+    for caminho in de_baixo_para_cima:
+        if not caminho.is_dir():
+            continue
+        try:
+            caminho.rmdir()  # levanta OSError se não estiver vazia
+            removidas += 1
+        except OSError:
+            continue
+    return removidas
+
+
 def unique_path(destino: Path) -> Path:
     """Caminho livre para gravar, sem nunca sobrescrever o que já existe.
 
