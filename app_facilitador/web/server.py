@@ -10,6 +10,7 @@ Nada sai da máquina: o servidor escuta só em localhost.
 import os
 import threading
 from datetime import date
+from pathlib import Path
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, url_for
 
@@ -109,6 +110,34 @@ def create_app() -> Flask:
             storage.set_setting(
                 connection, config.PROPOSALS_DIR_SETTING, escolhida or None
             )
+        return redirect(url_for("index"))
+
+    @app.post("/limpar")
+    def reset_history():
+        """Zera o histórico de varredura para um teste começar do zero.
+
+        Mantém o login e os processos cadastrados — só apaga o que a
+        varredura acumulou. Com o checkbox, apaga também os arquivos que o
+        app baixou (e só esses: usa os caminhos que ele mesmo gravou, nunca
+        varre a pasta apagando o que não é dele).
+        """
+        apagar_arquivos = request.form.get("apagar_arquivos") is not None
+        apagados = 0
+        with storage.connect() as connection:
+            if apagar_arquivos:
+                for caminho in storage.recorded_attachment_paths(connection):
+                    try:
+                        Path(caminho).unlink()
+                        apagados += 1
+                    except OSError:
+                        pass
+            storage.reset_scan_history(connection)
+
+        extra = f" e {apagados} arquivo(s) baixado(s)" if apagar_arquivos else ""
+        flash(
+            f"Histórico de varredura limpo{extra}. "
+            "Seu login e os processos cadastrados foram mantidos."
+        )
         return redirect(url_for("index"))
 
     @app.post("/processos")

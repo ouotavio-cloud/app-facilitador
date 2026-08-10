@@ -154,6 +154,38 @@ class TestNomeComFornecedor:
         assert nome.endswith(".pdf")
 
 
+class TestNaoEProposta:
+    """Nota fiscal, contrato e habilitação não são proposta — do log real."""
+
+    @pytest.mark.parametrize(
+        "texto",
+        [
+            "DANFE 1834316 - 304247678.pdf",
+            "CND - MUNICIPAL - Wireflex.pdf",
+            "Cartão CNPJ LCR Cabos.pdf",
+            "Simples Nacional LCR Cabos.pdf",
+            "Inscrição Estadual LCR Cabos.pdf",
+            "Certidão de ISSQN.pdf",
+            "Feitos Trabalhistas - Wireflex.pdf",
+            "Nota Fiscal 12345.pdf",
+        ],
+    )
+    def test_reconhece_nao_proposta(self, texto):
+        assert attachments.is_probably_not_proposal(texto)
+
+    @pytest.mark.parametrize(
+        "texto",
+        [
+            "Proposta Comercial 0018532 - ANGOLINI.pdf",
+            "260722 - PT - BERMAD - R00.pdf",
+            "Orçamento tubos.pdf",
+            "PROPOSTA COMERCIAL CROSSFOX.xlsx",
+        ],
+    )
+    def test_nao_marca_proposta_de_verdade(self, texto):
+        assert not attachments.is_probably_not_proposal(texto)
+
+
 class TestTipoDaProposta:
     def test_reconhece_a_tecnica_pela_sigla_pt(self):
         assert attachments.classify_proposal("Engeform - 260722 - PT - BERMAD - R00.pdf") == "tecnica"

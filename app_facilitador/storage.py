@@ -396,6 +396,28 @@ def record_attachment(
     )
 
 
+def recorded_attachment_paths(connection: sqlite3.Connection) -> list[str]:
+    """Caminhos dos arquivos que o app baixou (para poder apagá-los no reset)."""
+    rows = connection.execute(
+        "SELECT path FROM attachments WHERE path IS NOT NULL"
+    ).fetchall()
+    return [row["path"] for row in rows]
+
+
+def reset_scan_history(connection: sqlite3.Connection) -> None:
+    """Apaga o histórico de varredura — mensagens, códigos e anexos.
+
+    Deixa de fora, de propósito, o que o usuário configurou: os processos
+    cadastrados e as preferências (pasta das propostas) continuam. O login
+    nem passa por aqui — é um perfil de navegador em disco, não um registro
+    no banco. Serve para começar um teste do zero sem reconectar nem
+    recadastrar nada.
+    """
+    connection.execute("DELETE FROM attachments")
+    connection.execute("DELETE FROM proposal_codes")
+    connection.execute("DELETE FROM messages")
+
+
 def downloaded_conversations(connection: sqlite3.Connection) -> set[str]:
     """Conversas cujos anexos já foram baixados com sucesso.
 

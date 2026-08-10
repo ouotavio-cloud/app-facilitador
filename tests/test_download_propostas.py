@@ -460,6 +460,36 @@ def test_pula_a_tecnica_quando_vem_com_a_comercial(outlook, tmp_path):
     assert resultado.downloaded == 1
 
 
+def test_email_de_nota_fiscal_nao_e_aberto(outlook):
+    """Do log real: e-mails de DANFE/contrato citam o código mas não são
+    proposta — não podem ser abertos (marca como lido) nem baixados."""
+    _cadastrar("SUP.2026-185")
+    outlook["mensagens"] = [
+        _mensagem("c1", "DANFE 1834316 referente à SUP.2026-185")
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["DANFE 1834316.pdf"]})
+
+    resultado = scanner.scan()
+
+    assert outlook["pagina"].abertas == []
+    assert resultado.downloaded == 0
+    assert resultado.skipped_non_proposal == 1
+
+
+def test_habilitacao_junto_da_proposta_nao_e_baixada(outlook, tmp_path):
+    """No mesmo e-mail vêm a proposta e a papelada; só a proposta é guardada."""
+    _cadastrar("SUP.2026-185", "Obra X")
+    outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-185")]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["Proposta Comercial - ANGOLINI.pdf", "Cartão CNPJ Angolini.pdf",
+                "Certidão CND Angolini.pdf"]}
+    )
+
+    resultado = scanner.scan()
+
+    assert resultado.downloaded == 1  # só a proposta
+
+
 def test_sem_varredura_profunda_email_nao_identificado_nao_e_aberto(outlook):
     """Sem deep scan, e-mail que não casou por assunto não é aberto (não marca lido)."""
     _cadastrar("SUP.2026-197")

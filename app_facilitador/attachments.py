@@ -59,6 +59,33 @@ def is_document(filename: str) -> bool:
     return Path(filename).suffix.lower() in DOCUMENT_EXTENSIONS
 
 
+# Termos que denunciam um documento que NÃO é proposta de fornecedor:
+# nota fiscal, ordem de compra, contrato, e a papelada de habilitação
+# (certidões, CNPJ, Simples Nacional…). Aparecem muito nas threads de
+# cotação — o fornecedor manda a proposta e, depois, nota/contrato/certidões
+# —, mas o que interessa arquivar é a proposta. Casados por palavra para não
+# pegar no meio de outra (ex.: "nfe" dentro de um nome qualquer).
+_NAO_PROPOSTA = re.compile(
+    r"\b("
+    r"danfe|nota fiscal|nf-?e|boleto|fatura|"
+    r"certid\w*|cnd|cnpj|simples nacional|inscri\w+ (estadual|municipal)|"
+    r"cadesp|enquadramento|improbidade|feitos trabalhistas|alvar\w*|"
+    r"ordem de compra|pedido de compra|purchase order"
+    r")\b"
+)
+
+
+def is_probably_not_proposal(text: str) -> bool:
+    """True quando o texto (assunto ou nome de arquivo) é claramente de um
+    documento que não é proposta — nota fiscal, contrato, habilitação.
+
+    Conservador de propósito: só termos que praticamente nunca aparecem no
+    nome de uma proposta comercial, para não descartar uma proposta de
+    verdade por engano.
+    """
+    return bool(_NAO_PROPOSTA.search(normalize_for_comparison(text or "")))
+
+
 def sanitize(name: str, fallback: str = "sem-nome") -> str:
     """Transforma um texto qualquer num nome de pasta ou arquivo válido.
 

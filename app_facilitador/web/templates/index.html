@@ -111,9 +111,9 @@
       <input type="checkbox" name="baixar_anexos" checked>
       Baixar anexos
     </label>
-    <label class="opcao-inline" title="Abre também os e-mails com anexo que não foram identificados pelo assunto, e lê o corpo e o texto do PDF para achar o código dentro. Mais lento e marca esses e-mails como lidos.">
+    <label class="opcao-inline" title="ATENÇÃO: abre TODOS os e-mails com anexo que não bateram pelo assunto para ler o corpo — isso os marca como lidos no seu Outlook. Deixe desligado para varrer só o que já é reconhecido pelo assunto.">
       <input type="checkbox" name="varredura_profunda">
-      Vasculhar corpo e PDF
+      Vasculhar corpo (abre e-mails)
     </label>
     <label class="opcao-inline" title="Por padrão, quando o fornecedor manda a proposta técnica e a comercial no mesmo e-mail, o app guarda só a comercial (a que tem preço). Marque para guardar a técnica também.">
       <input type="checkbox" name="baixar_tecnica">
@@ -358,6 +358,25 @@
   {% else %}
   <p class="vazio">Nenhum e-mail registrado ainda. Rode a varredura.</p>
   {% endif %}
+</section>
+
+<section class="cartao">
+  <div class="cartao-cabecalho">
+    <h2>Manutenção</h2>
+  </div>
+  <form method="post" action="{{ url_for('reset_history') }}" class="linha-form"
+        onsubmit="return confirm('Limpar o histórico de varredura? Seu login e os processos cadastrados são mantidos. Esta ação não pode ser desfeita.')">
+    <label class="opcao-inline" title="Apaga da pasta de propostas apenas os arquivos que o próprio app baixou.">
+      <input type="checkbox" name="apagar_arquivos">
+      Apagar também os arquivos já baixados
+    </label>
+    <button type="submit" class="botao-secundario botao-parar">Limpar registros</button>
+  </form>
+  <p class="dica ressalva">
+    Zera o que a varredura acumulou (e-mails vistos, propostas identificadas)
+    para um teste começar do zero. <strong>Não</strong> mexe no seu login nem
+    nos processos que você cadastrou.
+  </p>
 </section>
 
 <p class="rodape">

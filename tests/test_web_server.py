@@ -268,6 +268,53 @@ def test_stop_scan_route_signals_the_job(client, monkeypatch):
     assert chamou == [True]
 
 
+def test_reset_clears_history_but_keeps_processes(client, tmp_path):
+    """Limpar registros zera a varredura mas mantém login e processos."""
+    with storage.connect(config.DB_PATH) as conexao:
+        storage.add_process(conexao, "SUP.2026-197", "Obra")
+        storage.save_message(
+            conexao,
+            {"conv_id": "c1", "sender_name": "F", "sender_email": "f@x.com",
+             "subject": "Proposta SUP.2026-197", "received_at": None,
+             "received_at_raw": "hoje", "preview": None, "is_pinned": False,
+             "has_attachments": True},
+            ["SUP.2026-197"],
+        )
+    config.LOGIN_MARKER_PATH.write_text("{}", encoding="utf-8")
+
+    client.post("/limpar")
+
+    with storage.connect(config.DB_PATH) as conexao:
+        assert storage.count_messages(conexao) == 0
+        assert len(storage.list_processes(conexao)) == 1  # processo mantido
+    assert config.LOGIN_MARKER_PATH.exists()  # login mantido
+
+
+def test_reset_can_delete_downloaded_files(client, tmp_path):
+    """Com o checkbox, apaga só os arquivos que o app registrou ter baixado."""
+    baixado = tmp_path / "proposta.pdf"
+    baixado.write_text("x", encoding="utf-8")
+    alheio = tmp_path / "arquivo do usuario.pdf"
+    alheio.write_text("y", encoding="utf-8")
+    with storage.connect(config.DB_PATH) as conexao:
+        storage.save_message(
+            conexao,
+            {"conv_id": "c1", "sender_name": "F", "sender_email": "f@x.com",
+             "subject": "s", "received_at": None, "received_at_raw": "hoje",
+             "preview": None, "is_pinned": False, "has_attachments": True},
+            [],
+        )
+        storage.record_attachment(
+            conexao, conv_id="c1", filename="proposta.pdf", path=str(baixado),
+            code="SUP.2026-197", supplier="F",
+        )
+
+    client.post("/limpar", data={"apagar_arquivos": "on"})
+
+    assert not baixado.exists()  # o que o app baixou foi apagado
+    assert alheio.exists()  # o que não é do app permanece
+
+
 def test_scan_form_passes_the_download_toggle(client, monkeypatch):
     """Desmarcar 'Baixar anexos' precisa realmente desligar o download."""
     args = {}

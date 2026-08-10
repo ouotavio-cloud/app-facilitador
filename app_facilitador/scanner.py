@@ -5,8 +5,6 @@ processo (`proposal_detector`) e estado local (`storage`) — e produz o
 resumo do que foi encontrado (PLANEJAMENTO.md, Fase 4).
 """
 
-import shutil
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,8 +42,11 @@ class ScanResult:
     # apareciam no assunto/preview. É o ganho da leitura de conteúdo.
     codes_in_content: int = 0
     # Propostas achadas pela varredura profunda: e-mails que não casavam por
-    # assunto/obra, mas cujo corpo/anexo revelou um processo cadastrado.
+    # assunto/obra, mas cujo corpo revelou um processo cadastrado.
     deep_matches: int = 0
+    # E-mails identificados mas pulados por parecerem não-proposta (nota
+    # fiscal, contrato, habilitação) — não são abertos nem baixados.
+    skipped_non_proposal: int = 0
     stopped: bool = False
     # Caminho de um HTML do painel de leitura salvo quando um download
     # falha — é o que permite calibrar os seletores sem outra compilação.
@@ -70,6 +71,11 @@ class ScanResult:
         if self.codes_in_content:
             lines.append(
                 f"Códigos que só apareciam no corpo/anexo: {self.codes_in_content}"
+            )
+        if self.skipped_non_proposal:
+            lines.append(
+                f"E-mails pulados por não serem proposta (nota/contrato/habilitação): "
+                f"{self.skipped_non_proposal}"
             )
         if self.download_failures:
             lines.append(f"Anexos que não deu para baixar: {self.download_failures}")
@@ -185,6 +191,15 @@ def scan(
                 if message["conv_id"] in ja_baixados:
                     continue
                 if not message.get("has_attachments"):
+                    continue
+                # Não abre (nem baixa) e-mail que é claramente nota fiscal,
+                # contrato ou habilitação. Esses citam o código na thread da
+                # cotação e casavam, mas não são proposta — abri-los só
+                # marcava e-mails como lidos e enchia a pasta de lixo.
+                if attachments.is_probably_not_proposal(
+                    f"{message.get('subject') or ''} {message.get('preview') or ''}"
+                ):
+                    result.skipped_non_proposal += 1
                     continue
 
                 try:
@@ -311,10 +326,11 @@ def _baixar_anexos_abertos(
         nome
         for nome in browser_client.find_attachments(page, sorted(_EXTENSIONS))
         if attachments.is_document(nome)
+        and not attachments.is_probably_not_proposal(nome)
     ]
     if not arquivos:
-        # O e-mail dizia ter anexo, mas nenhum é documento — assinatura ou
-        # imagem embutida. Não é erro, é o filtro funcionando.
+        # O e-mail dizia ter anexo, mas nenhum é proposta — só imagem, nota
+        # fiscal ou habilitação. Não é erro, é o filtro funcionando.
         return []
 
     selecionados = attachments.select_proposals(
@@ -401,94 +417,48 @@ def _deep_scan_message(
     result: ScanResult,
     keep_technical: bool = False,
 ) -> None:
-    """Varredura profunda: abre um e-mail não identificado e caça o código
-    no corpo e dentro do anexo.
+    """Varredura profunda: abre um e-mail não identificado e lê o CORPO
+    para achar o código escrito ali (não só no assunto).
 
-    É o que pega a proposta cujo código não está no assunto nem no preview.
-    Baixa os anexos para uma pasta temporária só para ler o texto; se nada
-    casar com um processo cadastrado, os temporários somem e nada é
-    arquivado. Se casar, os arquivos vão para a árvore definitiva.
+    Lê apenas o corpo — de propósito. A versão anterior baixava todo anexo
+    de todo e-mail para uma pasta temporária só para ler o PDF, e isso, numa
+    caixa de trabalho, baixava centenas de arquivos (notas, contratos,
+    certidões) e os descartava — enchia o histórico do navegador e abria
+    e-mails que não eram proposta. Agora, se o corpo casar com um processo
+    cadastrado, os anexos-proposta são baixados de verdade; se não casar,
+    nada é baixado. O preço é não pegar o código que só existe DENTRO do PDF
+    de um e-mail sem nenhuma pista no assunto/corpo — caso raro, e caro
+    demais de cobrir.
     """
     if not browser_client.open_message(page, message["conv_id"]):
         return
 
-    arquivos = [
-        nome
-        for nome in browser_client.find_attachments(page, sorted(_EXTENSIONS))
-        if attachments.is_document(nome)
-    ]
-    if not arquivos:
-        return
-
     corpo = browser_client.read_message_body(page)
+    texto = " ".join(
+        t for t in (inbox_parser.searchable_text(message), corpo) if t
+    ).strip()
 
-    with tempfile.TemporaryDirectory() as tmp:
-        baixados: dict[str, Path] = {}
-        textos_pdf: list[str] = []
-        for nome in arquivos:
-            alvo = Path(tmp) / attachments.file_name_for(nome)
-            if browser_client.download_attachment(page, nome, alvo):
-                baixados[nome] = alvo
-                textos_pdf.append(pdf_text.extract_text(alvo))
+    matches = proposal_detector.match_known_processes(texto, processes)
+    if not matches:
+        return  # o corpo não cita processo cadastrado; nada a baixar
 
-        texto = " ".join(
-            t
-            for t in ([inbox_parser.searchable_text(message), corpo] + textos_pdf)
-            if t
-        ).strip()
-        matches = proposal_detector.match_known_processes(texto, processes)
-        if not matches:
-            return  # não é proposta de processo cadastrado; o tempdir some
+    codigo = matches[0]["code"]
+    obra = next((p["obra"] for p in processes if p["code"] == codigo), None)
 
-        codigo = matches[0]["code"]
-        obra = next((p["obra"] for p in processes if p["code"] == codigo), None)
+    result.deep_matches += 1
+    novos = storage.add_message_codes(
+        connection, message["conv_id"], {m["code"]: "conteúdo" for m in matches}
+    )
+    result.codes_in_content += len(novos)
+    result.messages_with_codes += 1
+    for match in matches:
+        result.codes_found[match["code"]] = result.codes_found.get(match["code"], 0) + 1
 
-        result.deep_matches += 1
-        novos = storage.add_message_codes(
-            connection, message["conv_id"], {m["code"]: "conteúdo" for m in matches}
-        )
-        result.codes_in_content += len(novos)
-        result.messages_with_codes += 1
-        for match in matches:
-            result.codes_found[match["code"]] = (
-                result.codes_found.get(match["code"], 0) + 1
-            )
-
-        # Fornecedor e tipo por arquivo, como no download normal, e a mesma
-        # preferência pela comercial.
-        selecionados = attachments.select_proposals(
-            list(baixados),
-            message.get("sender_name"),
-            message.get("sender_email"),
-            keep_technical=keep_technical,
-        )
-        for item in selecionados:
-            nome, fornecedor, tipo = item["filename"], item["supplier"], item["tipo"]
-            destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
-            destino_dir.mkdir(parents=True, exist_ok=True)
-            destino = attachments.unique_path(
-                destino_dir / attachments.proposal_file_name(fornecedor, nome)
-            )
-            try:
-                shutil.move(str(baixados[nome]), str(destino))
-                gravou = True
-            except Exception:  # noqa: BLE001 - falha ao mover não pode derrubar a varredura
-                gravou = False
-
-            storage.record_attachment(
-                connection,
-                conv_id=message["conv_id"],
-                filename=nome,
-                path=str(destino) if gravou else None,
-                code=codigo,
-                supplier=fornecedor,
-                tipo=tipo,
-                error=None if gravou else "não foi possível salvar o anexo",
-            )
-            if gravou:
-                result.downloaded += 1
-            else:
-                result.download_failures += 1
+    # Casou pelo corpo: agora sim baixa os anexos-proposta de verdade,
+    # com o mesmo filtro e preferência pela comercial do download normal.
+    _baixar_anexos_abertos(
+        page, connection, message, codigo, obra, base_dir, result, keep_technical
+    )
 
 
 def _salvar_diagnostico(page, result: ScanResult) -> None:
