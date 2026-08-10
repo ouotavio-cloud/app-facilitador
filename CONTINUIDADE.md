@@ -31,6 +31,7 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 | 1.3 Baixar o anexo, varrendo a caixa inteira | Pronto (v8), confirmado pelo usuário ("baixou os itens") |
 | Fornecedor no nome do arquivo | Pronto (v9) |
 | Não rebaixar se o arquivo já está na pasta (disco manda) | Pronto (v9) |
+| Ler corpo do e-mail e texto do PDF (código fora do assunto) | Pronto (v10) |
 | 1.4 Avisar ao terminar a varredura | Pronto (resumo na tela) |
 | Botão de parar a varredura | Pronto (v7) |
 | Interruptor "baixar anexos" (liga/desliga o download) | Pronto (v7) |
@@ -57,16 +58,30 @@ salva o painel de leitura inteiro. Com esse HTML dá para acertar os
 seletores em `_JS_FIND_ATTACHMENTS`, `_baixar_pelo_botao` e
 `_baixar_pelo_menu`.
 
-### 2. Ler o corpo do e-mail e o conteúdo dos anexos
+### 2. Apelido de fornecedor (próximo pedido do usuário)
 
-Hoje a detecção do código cobre **assunto e preview**. Se o fornecedor
-escreveu o código só dentro do PDF, o e-mail não é reconhecido e o anexo
-não é baixado. É o maior buraco que resta no Bloco 1.
+Ele pediu, junto com "ler corpo + PDF", um jeito de **corrigir manualmente
+o nome do fornecedor**. O nome hoje sai do domínio do e-mail
+(`attachments.supplier_folder`), que erra em dois casos: e-mail genérico
+(gmail do vendedor) e domínio que abrevia diferente do nome comercial. A
+decisão foi: manter o domínio como base e resolver as exceções com um
+apelido manual (tabela de-para: domínio ou remetente → nome preferido),
+**não** tentar ler a assinatura do e-mail (frágil, formato varia demais).
+Falta implementar: uma tabela `supplier_aliases` no storage e uma tela para
+o usuário editar; `supplier_folder` consulta o apelido antes do domínio.
 
-Ordem sugerida: corpo do e-mail (fácil, o painel de leitura já é aberto)
-→ texto de PDF → planilhas → OCR para PDF escaneado.
+### 3. Já feito: ler corpo do e-mail e conteúdo do PDF (v10)
 
-### 3. Sugestões do Bloco 3, se ele quiser
+A detecção agora vai além do assunto/preview. Para e-mails que já são
+abertos (proposta identificada), o corpo e o texto do PDF baixado são lidos
+e os códigos achados ali entram com a pista "conteúdo" (`pdf_text.py` +
+`browser_client.read_message_body` + `scanner._enriquecer_pelo_conteudo`).
+E há a **varredura profunda** opt-in (`scanner._deep_scan_message`): abre os
+e-mails com anexo que não bateram, baixa para uma pasta temporária só para
+ler, e arquiva se casar. Falta ainda: planilhas (xlsx) e OCR para PDF
+escaneado — deliberadamente fora por ora.
+
+### 4. Sugestões do Bloco 3, se ele quiser
 
 Por ordem de retorno, na minha leitura:
 

@@ -146,9 +146,15 @@ def create_app() -> Flask:
         # Checkbox marcado por padrão no HTML; quando desmarcado, o navegador
         # simplesmente não envia o campo — daí a ausência significar "não".
         baixar = request.form.get("baixar_anexos") is not None
+        # Varredura profunda é opt-in (desmarcada por padrão): abre e lê
+        # e-mails que não casaram, marcando-os como lidos.
+        profunda = request.form.get("varredura_profunda") is not None
 
         scan_job.start(
-            folder=folder, max_messages=max_messages, download_attachments=baixar
+            folder=folder,
+            max_messages=max_messages,
+            download_attachments=baixar,
+            deep_scan=profunda,
         )
         return redirect(url_for("index"))
 

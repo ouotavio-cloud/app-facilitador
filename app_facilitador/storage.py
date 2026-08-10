@@ -219,6 +219,46 @@ def save_message(
     return is_new
 
 
+def add_message_codes(
+    connection: sqlite3.Connection,
+    conv_id: str,
+    matched_by: dict[str, str | None],
+) -> list[str]:
+    """Acrescenta códigos a uma mensagem já salva. Devolve os que eram novos.
+
+    Usado quando o código aparece só no corpo do e-mail ou dentro do PDF —
+    descoberto depois de a mensagem já ter sido gravada pela leitura do
+    assunto. Para um código que já existe, funde as pistas ("obra" +
+    "anexo" → "obra, anexo") em vez de sobrescrever, para o painel mostrar
+    tudo o que confirmou aquela proposta.
+    """
+    novos: list[str] = []
+    for code, clue in matched_by.items():
+        existente = connection.execute(
+            "SELECT matched_by FROM proposal_codes WHERE conv_id = ? AND code = ?",
+            (conv_id, code),
+        ).fetchone()
+
+        if existente is None:
+            connection.execute(
+                "INSERT INTO proposal_codes (conv_id, code, matched_by) VALUES (?, ?, ?)",
+                (conv_id, code, clue),
+            )
+            novos.append(code)
+        elif clue:
+            pistas = [
+                p.strip()
+                for p in ((existente["matched_by"] or "").split(",") + clue.split(","))
+                if p.strip()
+            ]
+            fundido = ", ".join(dict.fromkeys(pistas))
+            connection.execute(
+                "UPDATE proposal_codes SET matched_by = ? WHERE conv_id = ? AND code = ?",
+                (fundido, conv_id, code),
+            )
+    return novos
+
+
 def count_messages(connection: sqlite3.Connection) -> int:
     return connection.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
 

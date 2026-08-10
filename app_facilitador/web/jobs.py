@@ -68,6 +68,7 @@ class ScanJob:
         folder: str | None = None,
         max_messages: int | None = None,
         download_attachments: bool = True,
+        deep_scan: bool = False,
     ) -> bool:
         """Dispara a varredura. Devolve False se já houver uma em andamento.
 
@@ -82,7 +83,9 @@ class ScanJob:
 
         self._stop.clear()
         self._thread = threading.Thread(
-            target=self._run, args=(folder, max_messages, download_attachments), daemon=True
+            target=self._run,
+            args=(folder, max_messages, download_attachments, deep_scan),
+            daemon=True,
         )
         self._thread.start()
         return True
@@ -101,7 +104,11 @@ class ScanJob:
         self._stop.set()
 
     def _run(
-        self, folder: str | None, max_messages: int | None, download_attachments: bool
+        self,
+        folder: str | None,
+        max_messages: int | None,
+        download_attachments: bool,
+        deep_scan: bool,
     ) -> None:
         try:
             result = scanner.scan(
@@ -110,6 +117,7 @@ class ScanJob:
                 on_progress=self._update_progress,
                 should_stop=self._stop.is_set,
                 download_attachments=download_attachments,
+                deep_scan=deep_scan,
             )
             summary = result.summary_lines()
             error = None

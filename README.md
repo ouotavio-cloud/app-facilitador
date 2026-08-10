@@ -55,10 +55,19 @@ Duas coisas a saber: para pegar o anexo o app precisa **abrir o e-mail**, o que 
 
 **E-mails recentes** — os últimos e-mails registrados, filtráveis por pasta.
 
+## Vasculhar corpo e PDF
+
+A busca normal procura o código no **assunto e no preview** — o que a lista de e-mails expõe sem abrir nada. Mas o fornecedor às vezes escreve o código só no corpo do e-mail, ou só dentro do PDF da proposta.
+
+Marque **"Vasculhar corpo e PDF"** na varredura para fechar esse buraco: o app abre também os e-mails com anexo que não bateram pelo assunto, lê o corpo e extrai o texto do PDF, e procura o código ali. Se achar um processo cadastrado, baixa e arquiva a proposta normalmente.
+
+É opt-in porque tem custo: abrir um e-mail o **marca como lido** no Outlook, e a varredura fica mais lenta (abre muito mais e-mails). Para os e-mails que já baixam propostas, o corpo e o PDF são lidos de qualquer forma — isso confirma o código e pega processos adicionais citados no texto, sem custo extra.
+
+PDF escaneado (imagem, sem camada de texto) não é lido — precisaria de OCR, que ficou de fora para não pesar o download.
+
 ## Limitações atuais
 
-- **A busca pelo código cobre assunto e preview**, que é o que a lista de e-mails expõe. Se o código do processo estiver apenas dentro do PDF, o e-mail não é reconhecido como proposta e o anexo não é baixado. Ler o corpo completo e o conteúdo dos anexos é o próximo passo.
-- **O botão de download depende do layout do Outlook Web.** O app tenta duas formas de acionar (botão que aparece ao passar o mouse, e o menu de mais ações). Se a Microsoft mudar a interface, é aqui que quebra primeiro — `dump_message_debug` em `browser_client.py` salva o HTML real do painel de leitura para recalibrar.
+- **O botão de download depende do layout do Outlook Web.** O app aciona o menu do anexo ("Salvar como"). Se a Microsoft mudar a interface, é aqui que quebra primeiro — a cada falha, `diagnostico-anexo.html` é salvo na pasta de dados com o HTML real do painel de leitura para recalibrar.
 
 ## Por que ler a tela do Outlook, e não uma API
 

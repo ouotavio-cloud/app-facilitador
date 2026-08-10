@@ -111,6 +111,10 @@
       <input type="checkbox" name="baixar_anexos" checked>
       Baixar anexos
     </label>
+    <label class="opcao-inline" title="Abre também os e-mails com anexo que não foram identificados pelo assunto, e lê o corpo e o texto do PDF para achar o código dentro. Mais lento e marca esses e-mails como lidos.">
+      <input type="checkbox" name="varredura_profunda">
+      Vasculhar corpo e PDF
+    </label>
     <button type="submit" id="botao-varrer">Varrer agora</button>
   </form>
 
@@ -300,8 +304,10 @@
     marca como lido no Outlook — só e-mails de processos que você cadastrou são
     abertos.
     <br>
-    A busca pelo código cobre o <strong>assunto e o preview</strong>. Se o código
-    estiver apenas dentro do PDF, o e-mail ainda não é reconhecido.
+    A busca normal cobre o <strong>assunto e o preview</strong>. Marque
+    <strong>“Vasculhar corpo e PDF”</strong> na varredura para também abrir os
+    e-mails com anexo que não bateram e procurar o código no corpo e dentro do
+    PDF — é mais lento e marca esses e-mails como lidos.
   </p>
 </section>
 

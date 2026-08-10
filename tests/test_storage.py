@@ -173,3 +173,28 @@ def test_downloaded_on_disk_ignores_failed_downloads(connection, tmp_path):
     _registra_anexo(connection, "conv-falha", None, error="não deu")
 
     assert storage.downloaded_conversations_on_disk(connection) == set()
+
+
+def test_add_message_codes_inserts_new_code(connection):
+    """Código achado no corpo/PDF depois de a mensagem já estar salva."""
+    storage.save_message(connection, _message(), [])
+
+    novos = storage.add_message_codes(connection, "conv-1", {"SUP.2026-197": "conteúdo"})
+
+    assert novos == ["SUP.2026-197"]
+    proposta = storage.list_messages_with_codes(connection)[0]
+    assert proposta["codes"] == ["SUP.2026-197"]
+    assert proposta["matched_by"] == ["conteúdo"]
+
+
+def test_add_message_codes_merges_clues_without_duplicating(connection):
+    """Casou pela obra e depois confirmou no conteúdo: as duas pistas somam."""
+    storage.save_message(
+        connection, _message(), ["SUP.2026-197"], matched_by={"SUP.2026-197": "obra"}
+    )
+
+    novos = storage.add_message_codes(connection, "conv-1", {"SUP.2026-197": "conteúdo"})
+
+    assert novos == []  # não era novo, só enriqueceu
+    proposta = storage.list_messages_with_codes(connection)[0]
+    assert proposta["matched_by"] == ["obra, conteúdo"]

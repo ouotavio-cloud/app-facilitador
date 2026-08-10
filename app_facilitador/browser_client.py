@@ -588,6 +588,32 @@ def find_attachments(page: Page, extensions: list[str]) -> list[str]:
     return page.evaluate(_JS_FIND_ATTACHMENTS, extensions)
 
 
+def read_message_body(page: Page) -> str:
+    """Texto do corpo do e-mail aberto no painel de leitura.
+
+    Serve para procurar o código do processo no corpo, não só no assunto —
+    o fornecedor muitas vezes escreve o código no texto ("segue proposta da
+    SUP.2026-197") sem repeti-lo no assunto.
+
+    Best-effort: se o painel não for reconhecido, devolve "". `innerText`
+    (e não `textContent`) porque respeita quebras e ignora o que está
+    escondido, ficando perto do que a pessoa lê na tela.
+    """
+    try:
+        return page.evaluate(
+            """
+            () => {
+                const painel = document.querySelector('[role="main"]')
+                    || document.querySelector('[role="document"]')
+                    || document.body;
+                return (painel.innerText || '').trim();
+            }
+            """
+        )
+    except Exception:  # noqa: BLE001 - painel navegando/ausente: melhor vazio que quebrar
+        return ""
+
+
 class _SemAcionador(Exception):
     """O botão/menu de baixar não foi encontrado — não há download a esperar.
 

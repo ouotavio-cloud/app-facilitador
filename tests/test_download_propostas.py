@@ -15,11 +15,24 @@ from app_facilitador import browser_client, config, scanner, storage
 
 
 class _PaginaFalsa:
-    """Finge o painel de leitura do Outlook."""
+    """Finge o painel de leitura do Outlook.
 
-    def __init__(self, anexos_por_conversa=None, falhar_download=False):
+    `corpo_por_conversa` e `texto_pdf` deixam um teste simular um código que
+    só aparece no corpo do e-mail ou dentro do anexo — o que a leitura de
+    conteúdo e a varredura profunda existem para pegar.
+    """
+
+    def __init__(
+        self,
+        anexos_por_conversa=None,
+        falhar_download=False,
+        corpo_por_conversa=None,
+        texto_pdf=None,
+    ):
         self._anexos = anexos_por_conversa or {}
         self._falhar = falhar_download
+        self._corpo = corpo_por_conversa or {}
+        self._texto_pdf = texto_pdf or {}
         self.abertas = []
         self.baixados = []
         self._aberta = None
@@ -32,11 +45,16 @@ class _PaginaFalsa:
     def anexos(self):
         return list(self._anexos.get(self._aberta, []))
 
+    def corpo(self):
+        return self._corpo.get(self._aberta, "")
+
     def baixar(self, nome, destino):
         if self._falhar:
             return False
         destino.parent.mkdir(parents=True, exist_ok=True)
-        destino.write_text(f"conteúdo de {nome}", encoding="utf-8")
+        # Grava como conteúdo o texto de PDF configurado, para o extrator
+        # (trocado no fixture por leitura direta do arquivo) achá-lo.
+        destino.write_text(self._texto_pdf.get(nome, f"conteúdo de {nome}"), encoding="utf-8")
         self.baixados.append((self._aberta, nome, destino))
         return True
 
@@ -77,6 +95,18 @@ def outlook(tmp_path, monkeypatch):
         browser_client,
         "dump_message_debug",
         lambda page, destino: destino.write_text("<html>painel</html>", encoding="utf-8"),
+    )
+    # Corpo do e-mail vem do fake; o "texto do PDF" é o próprio conteúdo que
+    # o fake gravou no arquivo — assim um teste controla o que está dentro.
+    monkeypatch.setattr(
+        browser_client, "read_message_body", lambda page: page.corpo()
+    )
+    from app_facilitador import pdf_text
+
+    monkeypatch.setattr(
+        pdf_text,
+        "extract_text",
+        lambda caminho, **kw: __import__("pathlib").Path(caminho).read_text(encoding="utf-8"),
     )
 
     return estado
@@ -282,3 +312,114 @@ def test_pasta_escolhida_pelo_usuario_e_respeitada(outlook, tmp_path):
     assert (
         escolhida / "Sem obra" / "SUP.2026-197" / "Aciotubos" / "Aciotubos - Orçamento.pdf"
     ).exists()
+
+
+# ---------- leitura de corpo e PDF ----------
+
+
+def test_corpo_confirma_o_codigo_com_a_pista_conteudo(outlook):
+    """Casou pela obra; ler o corpo confirma o código e some a pista 'conteúdo'."""
+    _cadastrar("SUP.2026-197", "Sabesp Lote 4")
+    # Assunto tem a obra (casa por obra), mas não o código. O código está no corpo.
+    outlook["mensagens"] = [_mensagem("c1", "Proposta obra Sabesp Lote 4")]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["Orçamento.pdf"]},
+        corpo_por_conversa={"c1": "Segue nossa proposta referente à SUP.2026-197."},
+    )
+
+    scanner.scan()
+
+    with storage.connect(config.DB_PATH) as conexao:
+        proposta = storage.list_messages_with_codes(conexao)[0]
+    idx = proposta["codes"].index("SUP.2026-197")
+    assert "conteúdo" in proposta["matched_by"][idx]
+
+
+def test_pdf_confirma_o_codigo_com_a_pista_conteudo(outlook):
+    """O código também é lido de dentro do anexo, não só do corpo."""
+    _cadastrar("SUP.2026-197", "Sabesp Lote 4")
+    outlook["mensagens"] = [_mensagem("c1", "Proposta obra Sabesp Lote 4")]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["Orçamento.pdf"]},
+        texto_pdf={"Orçamento.pdf": "PROPOSTA COMERCIAL - Processo SUP.2026-197"},
+    )
+
+    scanner.scan()
+
+    with storage.connect(config.DB_PATH) as conexao:
+        proposta = storage.list_messages_with_codes(conexao)[0]
+    idx = proposta["codes"].index("SUP.2026-197")
+    assert "conteúdo" in proposta["matched_by"][idx]
+
+
+def test_conteudo_revela_processo_adicional(outlook):
+    """Um e-mail pode tratar de mais de um processo; o corpo revela o segundo."""
+    _cadastrar("SUP.2026-197")
+    _cadastrar("SUP.2026-198")
+    # Assunto casa só o 197 (pelo código); o 198 aparece apenas no corpo.
+    outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-197")]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["Orçamento.pdf"]},
+        corpo_por_conversa={"c1": "Aproveito e envio também a SUP.2026-198."},
+    )
+
+    resultado = scanner.scan()
+
+    assert resultado.codes_in_content == 1  # o 198, novo, veio do corpo
+    with storage.connect(config.DB_PATH) as conexao:
+        proposta = storage.list_messages_with_codes(conexao)[0]
+    assert "SUP.2026-198" in proposta["codes"]
+
+
+# ---------- varredura profunda ----------
+
+
+def test_varredura_profunda_acha_proposta_pelo_corpo(outlook, tmp_path):
+    """E-mail sem pista no assunto, mas com o código no corpo, é encontrado."""
+    _cadastrar("SUP.2026-197", "Sabesp Lote 4")
+    # Assunto genérico: não casa por assunto/obra.
+    outlook["mensagens"] = [_mensagem("c1", "Boa tarde, segue anexo")]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["Orçamento.pdf"]},
+        corpo_por_conversa={"c1": "Referente ao processo SUP.2026-197, segue proposta."},
+    )
+
+    resultado = scanner.scan(deep_scan=True)
+
+    assert resultado.deep_matches == 1
+    assert resultado.downloaded == 1
+    assert (
+        tmp_path / "Propostas" / "Sabesp Lote 4" / "SUP.2026-197" / "Aciotubos"
+        / "Aciotubos - Orçamento.pdf"
+    ).exists()
+
+
+def test_varredura_profunda_nao_arquiva_o_que_nao_casa(outlook, tmp_path):
+    """E-mail com anexo mas sem processo cadastrado: abre, lê, e descarta."""
+    _cadastrar("SUP.2026-197")
+    outlook["mensagens"] = [_mensagem("c1", "Newsletter do fornecedor")]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["catalogo.pdf"]},
+        corpo_por_conversa={"c1": "Confira nossos lançamentos deste mês."},
+        texto_pdf={"catalogo.pdf": "catálogo de produtos, sem código nenhum"},
+    )
+
+    resultado = scanner.scan(deep_scan=True)
+
+    assert resultado.deep_matches == 0
+    assert resultado.downloaded == 0
+    assert not (tmp_path / "Propostas").exists()
+
+
+def test_sem_varredura_profunda_email_nao_identificado_nao_e_aberto(outlook):
+    """Sem deep scan, e-mail que não casou por assunto não é aberto (não marca lido)."""
+    _cadastrar("SUP.2026-197")
+    outlook["mensagens"] = [_mensagem("c1", "Boa tarde, segue anexo")]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["Orçamento.pdf"]},
+        corpo_por_conversa={"c1": "Referente ao SUP.2026-197."},
+    )
+
+    scanner.scan(deep_scan=False)
+
+    assert outlook["pagina"].abertas == []

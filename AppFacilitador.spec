@@ -64,6 +64,10 @@ a = Analysis(
         # O Flask carrega este por caminho indireto; sem declarar, o
         # PyInstaller não o enxerga na análise estática.
         "jinja2.ext",
+        # O pypdf é importado dentro da função (lazy), então a análise
+        # estática do PyInstaller não o encontra sozinho. Sem declarar aqui,
+        # o app compila mas a leitura de PDF vira silenciosamente "".
+        "pypdf",
     ],
     hookspath=[],
     runtime_hooks=[],
