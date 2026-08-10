@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app_facilitador import attachments, browser_client, config, inbox_parser
-from app_facilitador import pdf_text, proposal_detector, storage
+from app_facilitador import logs, pdf_text, proposal_detector, storage
+
+_log = logs.get_logger("scanner")
 
 # Extensões procuradas nos anexos, na forma que o JavaScript da busca
 # espera. Vem de `attachments` para não haver duas listas divergindo.
@@ -130,6 +132,11 @@ def scan(
     """
     result = ScanResult(folder=folder)
     last_reported = 0
+    _log.info(
+        "varredura iniciada — pasta=%s limite=%s baixar=%s profunda=%s tecnica=%s",
+        folder or "Caixa de Entrada", max_messages, download_attachments,
+        deep_scan, keep_technical,
+    )
 
     def print_progress(count: int) -> None:
         # Comparar com o último valor impresso, e não testar `count %
@@ -192,10 +199,16 @@ def scan(
                             pasta_propostas, result, keep_technical,
                         )
                 except Exception as error:  # noqa: BLE001 - idem: não derruba a varredura
+                    _log.exception("erro ao processar anexo de %r", message.get("subject"))
                     result.errors.append(
                         f"anexo de {message.get('subject', '(sem assunto)')}: {error}"
                     )
 
+    _log.info(
+        "varredura concluída — %d e-mails, %d baixados, %d falhas%s",
+        result.scanned, result.downloaded, result.download_failures,
+        " (interrompida)" if result.stopped else "",
+    )
     return result
 
 

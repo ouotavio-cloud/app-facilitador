@@ -140,9 +140,13 @@ def supplier_from_filename(filename: str) -> str | None:
     segmentos = _segmentos(Path(filename or "").stem)
     for i, segmento in enumerate(segmentos[:-1]):
         if normalize_for_comparison(segmento) in _MARCADORES_TIPO:
-            candidato = segmentos[i + 1]
+            candidato = segmentos[i + 1].strip()
             # "R00", "REV01" e afins são revisão, não fornecedor.
-            if re.fullmatch(r"(?i)r\d+|rev\s*\d+", candidato.strip()):
+            if re.fullmatch(r"(?i)r\d+|rev\s*\d+", candidato):
+                continue
+            # Precisa de nome de verdade: "2026", "08", "34072." não são
+            # fornecedor. Exige ao menos três letras.
+            if len(re.sub(r"[^A-Za-zÀ-ÿ]", "", candidato)) < 3:
                 continue
             return sanitize(candidato, fallback="Fornecedor")
     return None
@@ -215,7 +219,27 @@ def supplier_folder(sender_name: str | None, sender_email: str | None) -> str:
     if dominio and dominio not in _GENERIC_EMAIL_DOMAINS:
         return sanitize(_company_from_domain(dominio), fallback="Fornecedor")
 
-    return sanitize(sender_name or dominio or "", fallback="Fornecedor")
+    return _supplier_from_person(sender_name, sender_email)
+
+
+def _supplier_from_person(sender_name: str | None, sender_email: str | None) -> str:
+    """Fornecedor a partir da pessoa, para e-mail pessoal (gmail e afins).
+
+    Se há um nome de verdade, é ele. Se o "nome" é o próprio endereço (ou
+    está vazio), tira do trecho antes do @ a parte mais parecida com um nome
+    — "vendas.angolini@..." vira "Angolini", não a pasta feia com o e-mail
+    inteiro que apareceu no banco.
+    """
+    nome = (sender_name or "").strip()
+    if nome and "@" not in nome:
+        return sanitize(nome, fallback="Fornecedor")
+
+    local = (sender_email or "").split("@")[0]
+    partes = [p for p in re.split(r"[._\-]", local) if p and not p.isdigit()]
+    escolha = partes[-1] if partes else local
+    if escolha.islower():
+        escolha = escolha.capitalize()
+    return sanitize(escolha, fallback="Fornecedor")
 
 
 def _domain_of(email: str | None) -> str | None:

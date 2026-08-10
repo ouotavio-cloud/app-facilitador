@@ -67,7 +67,11 @@ PDF escaneado (imagem, sem camada de texto) não é lido — precisaria de OCR, 
 
 ## Limitações atuais
 
-- **O botão de download depende do layout do Outlook Web.** O app aciona o menu do anexo ("Salvar como"). Se a Microsoft mudar a interface, é aqui que quebra primeiro — a cada falha, `diagnostico-anexo.html` é salvo na pasta de dados com o HTML real do painel de leitura para recalibrar.
+- **O botão de download depende do layout do Outlook Web.** O app aciona o menu do anexo ("Salvar como"). Se a Microsoft mudar a interface, é aqui que quebra primeiro — a cada falha, `diagnostico-anexo.html` é salvo na pasta de dados com a estrutura real de cada anexo (os controles ao redor) para recalibrar.
+
+## Registro (log)
+
+Tudo o que o app faz — cada varredura, cada e-mail aberto, cada anexo encontrado e cada tentativa de download com o resultado — fica registrado em **`app.log`** na pasta de dados (`%LOCALAPPDATA%\App Facilitador`, ou `%LOCALAPPDATA%\AppFacilitador`). O arquivo tem rotação (não cresce sem limite). Quando algo não funciona, esse arquivo mostra exatamente onde travou — é o que me mande junto do `diagnostico-anexo.html` se o download falhar.
 
 ## Por que ler a tela do Outlook, e não uma API
 

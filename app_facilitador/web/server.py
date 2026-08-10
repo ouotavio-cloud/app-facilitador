@@ -316,6 +316,9 @@ def _find_free_port(host: str, first_port: int, attempts: int) -> int:
 
 def run(open_browser: bool = True, port: int | None = None) -> None:
     """Sobe o servidor e abre o painel no navegador padrão."""
+    from app_facilitador import logs
+
+    logs.setup()
     app = create_app()
     port = port or _find_free_port(HOST, DEFAULT_PORT, PORT_ATTEMPTS)
     url = f"http://{HOST}:{port}"

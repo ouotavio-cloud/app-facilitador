@@ -72,6 +72,20 @@ class TestQuemEOFornecedor:
     def test_sem_remetente_nenhum_ainda_devolve_uma_pasta(self):
         assert attachments.supplier_folder(None, None) == "Fornecedor"
 
+    def test_quando_o_nome_e_o_proprio_email_extrai_do_endereco(self):
+        """Do banco: 'vendas.angolini@yahoo...' virava a pasta feia com o e-mail."""
+        assert (
+            attachments.supplier_folder(
+                "vendas.angolini@yahoo.com.br", "vendas.angolini@yahoo.com.br"
+            )
+            == "Angolini"
+        )
+
+    def test_sem_nome_extrai_do_local_do_email(self):
+        assert (
+            attachments.supplier_folder(None, "vendas.angolini@yahoo.com.br") == "Angolini"
+        )
+
 
 class TestNomesQueOWindowsAceita:
     def test_troca_caracteres_proibidos(self):
@@ -178,6 +192,15 @@ class TestFornecedorPeloArquivo:
     def test_pula_revisao_como_fornecedor(self):
         # Se depois do marcador só vier a revisão, não é fornecedor.
         assert attachments.supplier_from_filename("obra - PC - R00.pdf") is None
+
+    def test_ignora_candidato_so_com_numeros(self):
+        """Aprendido do banco: 'Proposta Comercial - 2026_08 - ...' dava '2026'."""
+        assert (
+            attachments.supplier_from_filename(
+                "Proposta Comercial -  2026_08 - 34072. - CONSORCIO.pdf"
+            )
+            is None
+        )
 
     def test_supplier_for_prefere_o_arquivo_ao_dominio(self):
         """Num e-mail interno, o domínio é do comprador; o arquivo diz o real."""

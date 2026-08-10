@@ -15,7 +15,9 @@ from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
-from app_facilitador import config, inbox_parser, paths
+from app_facilitador import config, inbox_parser, logs, paths
+
+_log = logs.get_logger("browser")
 
 # Seletores candidatos para os itens da lista de e-mails na caixa de
 # entrada do Outlook Web. Não há API estável para isso — é automação de
@@ -537,12 +539,18 @@ extensoes => {
         // O rótulo com o nome costuma ser um span sem interação. O que o
         // download precisa é do CARTÃO do anexo, que contém a setinha (˅)
         // que abre o menu "Salvar como". Subimos do rótulo até o primeiro
-        // ancestral que tenha um acionador de menu (ou ao menos um botão),
-        // e é esse que marcamos — assim o download encontra a setinha.
+        // ancestral que tenha um acionador — mas SEM cruzar para regiões
+        // grandes (a barra da mensagem, o painel inteiro): passar disso faz
+        // o download achar o menu "..." da MENSAGEM ("Denunciar como lixo"),
+        // não o do anexo, e o clique erra o alvo.
         let cartao = el;
-        for (let i = 0; i < 8 && cartao.parentElement; i++) {
-            if (cartao.querySelector('[aria-haspopup], button')) break;
-            cartao = cartao.parentElement;
+        for (let i = 0; i < 6 && cartao.parentElement; i++) {
+            const pai = cartao.parentElement;
+            const papelPai = pai.getAttribute('role') || '';
+            if (papelPai === 'toolbar' || papelPai === 'main'
+                || papelPai === 'region' || papelPai === 'document') break;
+            if (cartao.querySelector('[aria-haspopup], button, [role="button"], a[href]')) break;
+            cartao = pai;
         }
         cartao.setAttribute('data-facilitador-anexo', arquivo);
         achados.push(arquivo);
@@ -576,6 +584,7 @@ def open_message(page: Page, conv_id: str) -> bool:
     # O painel de leitura monta em etapas; sem esta pausa a busca por
     # anexos acontece antes de eles existirem.
     page.wait_for_timeout(2_000)
+    _log.info("abriu o e-mail %s", conv_id)
     return True
 
 
@@ -585,7 +594,9 @@ def find_attachments(page: Page, extensions: list[str]) -> list[str]:
     Marca cada elemento encontrado com `data-facilitador-anexo` para que o
     download consiga voltar nele depois sem repetir a busca.
     """
-    return page.evaluate(_JS_FIND_ATTACHMENTS, extensions)
+    achados = page.evaluate(_JS_FIND_ATTACHMENTS, extensions)
+    _log.info("anexos encontrados no e-mail: %s", achados or "(nenhum)")
+    return achados
 
 
 def read_message_body(page: Page) -> str:
@@ -641,6 +652,7 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
     """
     alvo = page.locator(f'[data-facilitador-anexo="{filename}"]').first
     if alvo.count() == 0:
+        _log.warning("anexo %r não foi marcado na página; não dá para baixar", filename)
         return False
 
     try:
@@ -658,12 +670,19 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
                 if not tentativa(page, alvo):
                     raise _SemAcionador
             download.value.save_as(str(destino))
+            _log.info("baixou %r via %s", filename, tentativa.__name__)
             return True
         except _SemAcionador:
+            _log.debug("%s: acionador não encontrado para %r", tentativa.__name__, filename)
             continue
-        except Exception:  # noqa: BLE001 - timeout ou clique sem efeito; tenta a próxima forma
+        except Exception as exc:  # noqa: BLE001 - timeout ou clique sem efeito; tenta a próxima forma
+            _log.debug(
+                "%s falhou para %r: %s", tentativa.__name__, filename,
+                str(exc).splitlines()[0] if str(exc) else exc.__class__.__name__,
+            )
             continue
 
+    _log.warning("nenhum caminho de download funcionou para %r", filename)
     return False
 
 
@@ -717,24 +736,85 @@ def _baixar_pelo_botao(page: Page, alvo) -> bool:
     return False
 
 
-def dump_message_debug(page: Page, destino) -> None:
-    """Salva o HTML do painel de leitura, para calibrar a busca de anexos.
+# Extrai a estrutura em volta de cada anexo: o cartão do anexo e os
+# controles (botões, menus, links) perto dele. É o que faltava no
+# diagnóstico anterior, que pegava só [role=main] e não continha os anexos —
+# eles ficam fora dessa região no novo Outlook.
+_JS_DUMP_ANEXOS = """
+extensoes => {
+    const relatorio = [];
+    for (const el of document.querySelectorAll('[aria-label], [title]')) {
+        const rotulo = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+        const casou = rotulo.match(/([^\\\\/:*?"<>|\\s][^\\\\/:*?"<>|]*\\.[A-Za-z0-9]{2,5})(?=$|[,;\\s])/);
+        if (!casou) continue;
+        const ext = casou[1].slice(casou[1].lastIndexOf('.')).toLowerCase();
+        if (!extensoes.includes(ext)) continue;
 
-    A leitura de anexos depende da estrutura da página, que a Microsoft
-    muda sem aviso. Quando parar de funcionar, é este arquivo que mostra a
-    estrutura nova.
-    """
-    html = page.evaluate(
-        """
-        () => {
-            const painel = document.querySelector('[role="main"]')
-                || document.querySelector('[role="document"]')
-                || document.body;
-            return painel.outerHTML;
+        // Sobe alguns níveis montando o cartão do anexo.
+        let cartao = el;
+        for (let i = 0; i < 5 && cartao.parentElement; i++) {
+            const papel = cartao.parentElement.getAttribute('role') || '';
+            if (['toolbar','main','region','document'].includes(papel)) break;
+            cartao = cartao.parentElement;
         }
-        """
+        const controles = Array.from(
+            cartao.querySelectorAll('[aria-haspopup], button, [role="button"], [role="menuitem"], a[href]')
+        ).map(c => ({
+            tag: c.tagName.toLowerCase(),
+            role: c.getAttribute('role'),
+            haspopup: c.getAttribute('aria-haspopup'),
+            label: c.getAttribute('aria-label') || c.getAttribute('title') || (c.textContent||'').trim().slice(0,40),
+        }));
+
+        relatorio.push({
+            arquivo: casou[1],
+            rotulo_do_elemento: rotulo.slice(0, 120),
+            tag_do_elemento: el.tagName.toLowerCase(),
+            controles_no_cartao: controles,
+            html_do_cartao: cartao.outerHTML.slice(0, 4000),
+        });
+    }
+    return relatorio;
+}
+"""
+
+
+def dump_message_debug(page: Page, destino) -> None:
+    """Salva a estrutura real dos anexos, para calibrar o download.
+
+    A leitura de anexos depende da estrutura da página, que a Microsoft muda
+    sem aviso. O diagnóstico antigo salvava só `[role=main]`, e os anexos do
+    novo Outlook ficam FORA dessa região — por isso o arquivo saía sem eles.
+    Agora salvamos: (1) um relatório focado em cada anexo, com os controles
+    (botões/menus) ao redor, que é o que preciso para acertar o clique; e
+    (2) o `body` inteiro como reserva, para nada escapar.
+    """
+    import json
+
+    try:
+        anexos = page.evaluate(_JS_DUMP_ANEXOS, sorted(config_extensoes()))
+    except Exception as exc:  # noqa: BLE001 - diagnóstico não pode quebrar a varredura
+        anexos = [{"erro": str(exc)}]
+
+    try:
+        corpo = page.evaluate("() => document.body.outerHTML")
+    except Exception:  # noqa: BLE001
+        corpo = ""
+
+    conteudo = (
+        "=== RELATÓRIO DOS ANEXOS (controles ao redor de cada arquivo) ===\n"
+        + json.dumps(anexos, ensure_ascii=False, indent=2)
+        + "\n\n=== BODY COMPLETO (reserva) ===\n"
+        + corpo
     )
-    destino.write_text(html, encoding="utf-8")
+    destino.write_text(conteudo, encoding="utf-8")
+
+
+def config_extensoes() -> set[str]:
+    """Extensões de documento, para o diagnóstico usar a mesma lista."""
+    from app_facilitador import attachments
+
+    return attachments.DOCUMENT_EXTENSIONS
 
 
 class _BrowserSession:

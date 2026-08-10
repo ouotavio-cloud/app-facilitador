@@ -42,6 +42,29 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 | 2.3 Indicador de prazo do processo | Pronto |
 | 3 Sugestões adicionais | Listadas, nenhuma implementada |
 
+## Download falhando — pista do cache do usuário (v12)
+
+O usuário mandou o banco real: **21 anexos falharam** ("não foi possível
+baixar pelo Outlook") e o `diagnostico-anexo.html` capturou o menu da
+MENSAGEM ("Denunciar como lixo eletrônico"), não o do anexo. Diagnóstico:
+a marcação do cartão (`_JS_FIND_ATTACHMENTS`) subia demais e englobava a
+barra da mensagem, então `_baixar_pelo_menu` clicava o menu "..." da
+mensagem em vez da setinha do anexo. Feito na v12:
+- marcação para de subir ao cruzar role=toolbar/main/region/document e ao
+  achar um controle → cartão fica justo no anexo;
+- `dump_message_debug` agora salva um RELATÓRIO por anexo (controles ao
+  redor: botões, menus, aria-haspopup) + o body inteiro — o dump antigo
+  pegava só [role=main], que não contém os anexos no novo Outlook;
+- **log** novo (`app_facilitador/logs.py`) grava tudo em `app.log` na pasta
+  de dados: varredura, e-mail aberto, anexos achados, cada tentativa de
+  download e o resultado. É o que o usuário pediu ("função de log").
+
+**Se ainda falhar:** pedir o novo `diagnostico-anexo.html` (agora traz a
+estrutura certa) e o `app.log`, e calibrar `_baixar_pelo_menu`/marcação com
+isso. Também limpei nomes de fornecedor ruins vindos do banco: candidato só
+com números ("2026") é rejeitado, e e-mail cru como pasta
+("vendas.angolini@yahoo...") vira "Angolini".
+
 ## Em andamento (retomar aqui)
 
 Pedidos do usuário depois da v10, **em ordem**:
