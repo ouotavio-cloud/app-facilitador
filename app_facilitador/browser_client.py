@@ -825,6 +825,79 @@ def _baixar_pelo_botao(page: Page, alvo) -> bool:
     return False
 
 
+# O controle que desfixa uma mensagem é identificado pelo RÓTULO
+# (aria-label/title), nunca pela posição.
+#
+# Só vimos, no diagnóstico real, o rótulo de quando a mensagem AINDA NÃO
+# está fixada: "Manter esta mensagem na parte superior de sua pasta" (é
+# esse botão que a v12 clicava por engano — ver CONTINUIDADE.md). Não há
+# uma captura real do mesmo botão já fixado, então `_find_unpin_control`
+# procura as variações mais prováveis do rótulo nesse estado. Se nenhuma
+# bater, devolve None e a mensagem entra na lista para o usuário desafixar
+# à mão — o app nunca adivinha clicando em outra coisa.
+
+
+def _find_unpin_control(page: Page, conv_id: str):
+    """O controle que desfixa a mensagem, só quando dá para reconhecê-lo com
+    segurança pelo rótulo — nunca pela posição.
+
+    A causa do e-mail fixado foi um clique "no botão que houver" quando o
+    acionador esperado não estava lá. Desafixar com o mesmo tipo de clique
+    às cegas seria repetir o erro, só que na direção oposta. Sem um rótulo
+    reconhecível, é melhor devolver None e deixar o e-mail para o usuário
+    resolver à mão.
+    """
+    linha = page.locator(f'[data-convid="{conv_id}"]').first
+    if linha.count() == 0:
+        return None
+
+    candidato = linha.locator(
+        '[aria-label*="não manter" i], [title*="não manter" i], '
+        '[aria-label*="desafixar" i], [title*="desafixar" i], '
+        '[aria-label*="deixar de fixar" i], [title*="deixar de fixar" i], '
+        '[aria-label*="unpin" i], [title*="unpin" i]'
+    ).first
+    if candidato.count() > 0:
+        return candidato
+
+    # Reserva: o Outlook pode manter o MESMO rótulo de "Manter esta
+    # mensagem..." nos dois estados e sinalizar só por `aria-pressed`. Só
+    # serve quando esse sinal está presente E o rótulo ainda é o de
+    # fixar/manter — nunca "qualquer botão pressionado".
+    candidato = linha.locator(
+        '[aria-pressed="true"][aria-label*="parte superior" i], '
+        '[aria-pressed="true"][title*="parte superior" i]'
+    ).first
+    if candidato.count() > 0:
+        return candidato
+
+    return None
+
+
+def unpin_message(page: Page, conv_id: str) -> bool:
+    """Desfixa um e-mail já identificado como fixado (`message["is_pinned"]`).
+
+    Existe para desfazer o estrago de um bug já corrigido: versões
+    anteriores do app, tentando baixar um anexo, clicavam sem querer em
+    "Manter esta mensagem na parte superior de sua pasta" e fixavam o
+    e-mail (ver CONTINUIDADE.md). Best-effort por natureza — quando o
+    controle não é reconhecido com segurança, devolve False sem clicar em
+    nada, e quem chama registra o e-mail para resolução manual.
+    """
+    alvo = _find_unpin_control(page, conv_id)
+    if alvo is None:
+        _log.warning("não achei o controle de desafixar para %s; pulei", conv_id)
+        return False
+
+    try:
+        alvo.click(timeout=5_000)
+        _log.info("desafixou o e-mail %s", conv_id)
+        return True
+    except Exception as exc:  # noqa: BLE001 - clique sem efeito; melhor reportar que travar
+        _log.debug("desafixar falhou para %s: %s", conv_id, exc)
+        return False
+
+
 # Extrai a estrutura em volta de cada anexo: o cartão do anexo e os
 # controles (botões, menus, links) perto dele. É o que faltava no
 # diagnóstico anterior, que pegava só [role=main] e não continha os anexos —

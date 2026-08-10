@@ -95,11 +95,26 @@ atributos e a ordem dos botões da linha copiados do diagnóstico; conteúdo
 inventado, para não guardar e-mail de ninguém no repositório). Ele se pula
 quando não há navegador — a CI compila antes de instalar o Chromium.
 
-**Sobrou para o usuário fazer na mão:** desafixar os e-mails que as versões
-anteriores fixaram. O app não sabe quais foram — `save_message` usa
-`ON CONFLICT DO NOTHING`, então `is_pinned` congela na primeira vez que a
-conversa é vista e não registrou as fixadas depois. No Outlook elas ficam no
-topo da pasta, com o rótulo "Fixado".
+**Desafixar os e-mails que sobraram fixados (v13, mesma leva):** o app não
+sabe quais foram atingidos — `save_message` usa `ON CONFLICT DO NOTHING`,
+então `is_pinned` congela na primeira vez que a conversa é vista e não
+registrou as fixadas depois. Em vez de pedir para o usuário desafixar um por
+um no Outlook, o painel ganhou uma seção "Desafixar e-mails" que percorre a
+pasta ao vivo (o estado "Fixado" vem fresco do DOM a cada e-mail,
+`scanner.unpin_all`) e desafixa o que reconhece com segurança.
+
+**Ressalva importante:** não há captura real do rótulo do botão já
+FIXADO — só vimos, no diagnóstico, o rótulo de "Manter esta mensagem..."
+quando a mensagem ainda não estava fixada. `browser_client._find_unpin_control`
+cobre as variações mais prováveis ("não manter", "desafixar", "remover
+fixado" etc.) e, como reserva, `aria-pressed="true"` no mesmo botão. Segue a
+mesma disciplina que corrigiu o bug original: **nunca** cai para "o botão
+que houver" — sem rótulo reconhecível, pula o e-mail e lista o assunto para
+o usuário resolver à mão. Se a busca voltar com muita coisa em
+"não identificado", é sinal de que o rótulo real é outro — peça um
+`app.log` depois de rodar (`unpin_message` grava o que tentou e o que
+pulou) e, se precisar, uma captura de uma linha fixada para calibrar
+igual foi feito com os anexos.
 
 ## Download falhando — pista do cache do usuário (v12)
 

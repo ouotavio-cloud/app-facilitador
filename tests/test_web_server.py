@@ -331,6 +331,50 @@ def test_scan_form_passes_the_download_toggle(client, monkeypatch):
     assert args["download_attachments"] is True
 
 
+def test_unpin_status_endpoint_reports_idle_state(client):
+    status = client.get("/desafixar/status").get_json()
+
+    assert status["running"] is False
+    assert status["scanned"] == 0
+    assert status["stopping"] is False
+
+
+def test_stop_unpin_route_signals_the_job(client, monkeypatch):
+    chamou = []
+    monkeypatch.setattr(server.unpin_job, "stop", lambda: chamou.append(True))
+
+    response = client.post("/desafixar/parar")
+
+    assert response.status_code in (302, 303)
+    assert chamou == [True]
+
+
+def test_start_unpin_passes_the_chosen_folder(client, monkeypatch):
+    args = {}
+    monkeypatch.setattr(
+        server.unpin_job, "start", lambda **kw: args.update(kw) or True
+    )
+
+    client.post("/desafixar", data={"pasta": "caixa real"})
+
+    assert args["folder"] == "caixa real"
+
+
+def test_start_unpin_refuses_while_the_browser_is_busy(client, monkeypatch):
+    """As operações de navegador não podem disputar a mesma sessão do Outlook."""
+    chamou = []
+    monkeypatch.setattr(server, "_browser_busy", lambda: "varrendo seus e-mails")
+    monkeypatch.setattr(
+        server.unpin_job, "start", lambda **kw: chamou.append(True) or True
+    )
+
+    client.post("/desafixar", data={})
+
+    assert chamou == []
+    page = client.get("/").get_data(as_text=True)
+    assert "varrendo seus e-mails" in page
+
+
 def test_folder_filter_narrows_the_recent_list(client):
     with storage.connect(config.DB_PATH) as connection:
         for index, folder in enumerate(["caixa real", "Caixa de Entrada"]):

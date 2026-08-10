@@ -15,6 +15,13 @@ const botaoVarrer = document.getElementById("botao-varrer");
 const formParar = document.getElementById("form-parar");
 const botaoParar = document.getElementById("botao-parar");
 
+const statusDesafixar = document.getElementById("status-desafixar");
+const resumoDesafixar = document.getElementById("resumo-desafixar");
+const barraDesafixar = document.getElementById("barra-desafixar");
+const botaoDesafixar = document.getElementById("botao-desafixar");
+const formPararDesafixar = document.getElementById("form-parar-desafixar");
+const botaoPararDesafixar = document.getElementById("botao-parar-desafixar");
+
 const avisoLogin = document.getElementById("aviso-login");
 const avisoAndamento = document.getElementById("aviso-login-andamento");
 const mensagemLogin = document.getElementById("mensagem-login");
@@ -25,6 +32,7 @@ const textoConexao = document.getElementById("texto-conexao");
 
 let varreduraRodava = false;
 let loginRodava = false;
+let desafixarRodava = false;
 
 // Começa com o que o servidor já renderizou, para o botão de varrer não
 // piscar de habilitado para desabilitado na primeira consulta.
@@ -100,6 +108,62 @@ async function atualizarVarredura() {
   varreduraRodava = estado.running;
 }
 
+function descreverDesafixar(estado) {
+  if (estado.running) {
+    if (estado.stopping) {
+      return "parando… (terminando o passo atual)";
+    }
+    const pasta = estado.folder || "Caixa de Entrada";
+    return `buscando em ${pasta} — ${estado.scanned} e-mails percorridos`;
+  }
+  if (estado.error) {
+    return "a última busca falhou";
+  }
+  if (estado.finished_at) {
+    return `última busca terminou às ${estado.finished_at}`;
+  }
+  return "nenhuma busca nesta sessão";
+}
+
+async function atualizarDesafixar() {
+  if (!statusDesafixar) return;
+
+  let estado;
+  try {
+    estado = await consultar("/desafixar/status");
+  } catch {
+    statusDesafixar.textContent = "servidor fora do ar";
+    return;
+  }
+
+  statusDesafixar.textContent = descreverDesafixar(estado);
+  statusDesafixar.classList.toggle("status-rodando", estado.running);
+  barraDesafixar.classList.toggle("oculto", !estado.running);
+
+  botaoDesafixar.disabled = estado.running || !conectado;
+  botaoDesafixar.title = conectado ? "" : "Conecte o app ao Outlook primeiro";
+  botaoDesafixar.textContent = estado.running ? "Buscando…" : "Buscar e desafixar";
+
+  formPararDesafixar.classList.toggle("oculto", !estado.running);
+  botaoPararDesafixar.disabled = estado.stopping;
+  botaoPararDesafixar.textContent = estado.stopping ? "Parando…" : "Parar busca";
+
+  const temErro = Boolean(estado.error);
+  const temResumo = estado.summary && estado.summary.length > 0;
+  resumoDesafixar.classList.toggle("resumo-erro", temErro);
+  resumoDesafixar.classList.toggle("oculto", !temErro && !temResumo);
+  if (temErro) {
+    resumoDesafixar.textContent = estado.error;
+  } else if (temResumo) {
+    resumoDesafixar.textContent = estado.summary.join("\n");
+  }
+
+  if (desafixarRodava && !estado.running) {
+    window.location.reload();
+  }
+  desafixarRodava = estado.running;
+}
+
 function marcarConectado(conectado) {
   pilulaConexao.classList.toggle("pilula-ok", conectado);
   pilulaConexao.classList.toggle("pilula-alerta", !conectado);
@@ -171,7 +235,9 @@ async function atualizarReunioes() {
 }
 
 async function atualizar() {
-  await Promise.all([atualizarVarredura(), atualizarLogin(), atualizarReunioes()]);
+  await Promise.all([
+    atualizarVarredura(), atualizarLogin(), atualizarReunioes(), atualizarDesafixar(),
+  ]);
 }
 
 atualizar();

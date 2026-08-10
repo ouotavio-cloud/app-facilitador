@@ -362,6 +362,37 @@
 
 <section class="cartao">
   <div class="cartao-cabecalho">
+    <h2>Desafixar e-mails</h2>
+    <span id="status-desafixar" class="status">verificando…</span>
+  </div>
+
+  <p class="dica ressalva">
+    Uma versão antiga do app, tentando baixar um anexo, às vezes clicava sem
+    querer em <strong>"Manter esta mensagem na parte superior de sua
+    pasta"</strong> — e fixava o e-mail. Já corrigido, mas os e-mails que
+    ficaram fixados continuam lá. Esta busca percorre a pasta e desafixa
+    sozinha o que reconhece com segurança; o que não reconhecer entra numa
+    lista para você desafixar direto no Outlook.
+  </p>
+
+  <form method="post" action="{{ url_for('start_unpin') }}" class="linha-form linha-form-final">
+    <label>
+      Pasta
+      <input type="text" name="pasta" list="lista-pastas" placeholder="Caixa de Entrada">
+    </label>
+    <button type="submit" id="botao-desafixar">Buscar e desafixar</button>
+  </form>
+
+  <form method="post" action="{{ url_for('stop_unpin') }}" id="form-parar-desafixar" class="oculto">
+    <button type="submit" id="botao-parar-desafixar" class="botao-secundario botao-parar">Parar busca</button>
+  </form>
+
+  <div id="barra-desafixar" class="barra oculto"></div>
+  <div id="resumo-desafixar" class="resumo oculto"></div>
+</section>
+
+<section class="cartao">
+  <div class="cartao-cabecalho">
     <h2>Manutenção</h2>
   </div>
   <form method="post" action="{{ url_for('reset_history') }}" class="linha-form"

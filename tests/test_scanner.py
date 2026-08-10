@@ -72,3 +72,41 @@ def test_summary_lines_flags_a_stopped_scan():
 
     assert lines[0].startswith("Varredura interrompida por você")
     assert "E-mails percorridos: 42" in lines
+
+
+class TestUnpinResult:
+    """Resumo da busca de e-mails fixados (ver `scanner.unpin_all`)."""
+
+    def test_reports_counts(self):
+        lines = scanner.UnpinResult(
+            scanned=30, pinned_found=4, unpinned=3
+        ).summary_lines()
+
+        assert "E-mails percorridos: 30" in lines
+        assert "Fixados encontrados: 4" in lines
+        assert "Desafixados: 3" in lines
+
+    def test_lists_the_ones_it_could_not_identify(self):
+        lines = scanner.UnpinResult(
+            pinned_found=2, unpinned=1, not_identified=["Proposta X"]
+        ).summary_lines()
+
+        assert any("1 e-mail(s)" in line for line in lines)
+        assert "  Proposta X" in lines
+
+    def test_says_nothing_was_left_unidentified(self):
+        """Sem sobra, o usuário não precisa ir conferir nada à mão."""
+        lines = scanner.UnpinResult(pinned_found=2, unpinned=2).summary_lines()
+
+        assert "Nenhum e-mail fixado sobrou por identificar." in lines
+
+    def test_omits_that_line_when_nothing_was_pinned(self):
+        """Sem nenhum fixado, dizer 'nada sobrou' seria ruído, não notícia."""
+        lines = scanner.UnpinResult(scanned=10).summary_lines()
+
+        assert "Nenhum e-mail fixado sobrou por identificar." not in lines
+
+    def test_flags_a_stopped_search(self):
+        lines = scanner.UnpinResult(scanned=10, stopped=True).summary_lines()
+
+        assert lines[0].startswith("Busca interrompida por você")
