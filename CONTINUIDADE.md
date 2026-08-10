@@ -32,6 +32,8 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 | Fornecedor no nome do arquivo | Pronto (v9) |
 | Não rebaixar se o arquivo já está na pasta (disco manda) | Pronto (v9) |
 | Ler corpo do e-mail e texto do PDF (código fora do assunto) | Pronto (v10) |
+| Fornecedor por arquivo (e-mail com vários fornecedores) | Pronto (v11) |
+| Priorizar proposta comercial (PC) sobre técnica (PT) | Pronto (v11) |
 | 1.4 Avisar ao terminar a varredura | Pronto (resumo na tela) |
 | Botão de parar a varredura | Pronto (v7) |
 | Interruptor "baixar anexos" (liga/desliga o download) | Pronto (v7) |
@@ -39,6 +41,30 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 | 2.2 Reuniões do dia e horários | Pronto |
 | 2.3 Indicador de prazo do processo | Pronto |
 | 3 Sugestões adicionais | Listadas, nenhuma implementada |
+
+## Em andamento (retomar aqui)
+
+Pedidos do usuário depois da v10, **em ordem**:
+
+1. **Fornecedor por ARQUIVO, não por e-mail.** FEITO (v11). Print mostrou um
+   e-mail interno (`engeform.com.br`) com propostas de BERMAD, RTS e SAINT
+   GOBAIN juntas. Agora `attachments.supplier_from_filename` pega o nome
+   depois do marcador PT/PC e `supplier_for` prefere isso ao domínio; o
+   scanner decide fornecedor **por arquivo** (`select_proposals`).
+2. **Priorizar a COMERCIAL sobre a TÉCNICA.** FEITO (v11).
+   `classify_proposal` → comercial/tecnica/None; `select_proposals` pula a
+   técnica quando há comercial do mesmo fornecedor **no mesmo e-mail**
+   (seguro: só-técnica é mantida). Coluna `tipo` no banco, badge no painel,
+   toggle "Baixar técnica também". **PENDENTE confirmar com o usuário**: se
+   PT e PC vierem em e-mails SEPARADOS, o "pular" atual (por e-mail) não
+   pega — precisaria ser por processo+fornecedor. Perguntei; ver resposta.
+3. **Otimizar a varredura com a BARRA DE PESQUISA do Outlook.** NÃO FEITO —
+   é a próxima e maior tarefa. Hoje rola a caixa inteira (750 e-mails). Ideia:
+   digitar cada código cadastrado na busca do Outlook e varrer só os
+   resultados. Ganho enorme e a busca indexa o corpo (pega código fora do
+   assunto de graça). Precisa calibrar o seletor da caixa de busca contra
+   HTML real — provável uma rodada de ajuste. Analisei para o usuário; ver
+   se ele topou antes de construir.
 
 ## O que fazer a seguir, em ordem
 

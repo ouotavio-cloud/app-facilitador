@@ -115,6 +115,10 @@
       <input type="checkbox" name="varredura_profunda">
       Vasculhar corpo e PDF
     </label>
+    <label class="opcao-inline" title="Por padrão, quando o fornecedor manda a proposta técnica e a comercial no mesmo e-mail, o app guarda só a comercial (a que tem preço). Marque para guardar a técnica também.">
+      <input type="checkbox" name="baixar_tecnica">
+      Baixar técnica também
+    </label>
     <button type="submit" id="botao-varrer">Varrer agora</button>
   </form>
 
@@ -269,6 +273,12 @@
               {% else %}
               <span class="selo selo-ok">baixado</span>
               {% endif %}
+              {% if arquivo.tipo == 'comercial' %}
+              <span class="selo selo-comercial" title="Proposta comercial (com preço)">comercial</span>
+              {% elif arquivo.tipo == 'tecnica' %}
+              <span class="selo selo-tecnica" title="Proposta técnica">técnica</span>
+              {% endif %}
+              {% if arquivo.supplier %}<span class="dica">{{ arquivo.supplier }}</span>{% endif %}
               <span class="dica" title="{{ arquivo.path or arquivo.error }}">{{ arquivo.filename }}</span>
             </div>
             {% else %}

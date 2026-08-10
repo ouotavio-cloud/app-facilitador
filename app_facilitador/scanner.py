@@ -100,6 +100,7 @@ def scan(
     download_attachments: bool = True,
     should_stop: Callable[[], bool] | None = None,
     deep_scan: bool = False,
+    keep_technical: bool = False,
 ) -> ScanResult:
     """Percorre uma pasta de e-mail e registra o que encontrar.
 
@@ -183,12 +184,12 @@ def scan(
                     if matches and download_attachments:
                         _download_proposal(
                             page, connection, message, matches, processes,
-                            pasta_propostas, result,
+                            pasta_propostas, result, keep_technical,
                         )
                     elif deep_scan and not matches:
                         _deep_scan_message(
                             page, connection, message, processes,
-                            pasta_propostas, result,
+                            pasta_propostas, result, keep_technical,
                         )
                 except Exception as error:  # noqa: BLE001 - idem: não derruba a varredura
                     result.errors.append(
@@ -249,6 +250,7 @@ def _download_proposal(
     processes: list[dict],
     base_dir: Path,
     result: ScanResult,
+    keep_technical: bool = False,
 ) -> None:
     """Abre um e-mail identificado como proposta, baixa os anexos e enriquece.
 
@@ -265,12 +267,9 @@ def _download_proposal(
 
     codigo = matches[0]["code"]
     obra = next((p["obra"] for p in processes if p["code"] == codigo), None)
-    fornecedor = attachments.supplier_folder(
-        message.get("sender_name"), message.get("sender_email")
-    )
 
     baixados = _baixar_anexos_abertos(
-        page, connection, message, codigo, obra, fornecedor, base_dir, result
+        page, connection, message, codigo, obra, base_dir, result, keep_technical
     )
     # Depois de baixar, lê o corpo e o texto dos PDFs para achar códigos que
     # não estavam no assunto — reforça a confiança e pega processos citados
@@ -284,13 +283,16 @@ def _baixar_anexos_abertos(
     message: dict,
     codigo: str,
     obra: str | None,
-    fornecedor: str,
     base_dir: Path,
     result: ScanResult,
+    keep_technical: bool,
 ) -> list[Path]:
     """Baixa e arquiva os anexos-documento do e-mail já aberto.
 
-    Devolve os caminhos gravados, para o enriquecimento ler o texto deles.
+    O fornecedor e o tipo (comercial/técnica) são decididos **por arquivo**,
+    porque um e-mail pode trazer propostas de vários fornecedores e, para
+    cada um, a técnica e a comercial. Devolve os caminhos gravados, para o
+    enriquecimento ler o texto deles.
     """
     arquivos = [
         nome
@@ -302,11 +304,18 @@ def _baixar_anexos_abertos(
         # imagem embutida. Não é erro, é o filtro funcionando.
         return []
 
-    destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
-    destino_dir.mkdir(parents=True, exist_ok=True)
+    selecionados = attachments.select_proposals(
+        arquivos,
+        message.get("sender_name"),
+        message.get("sender_email"),
+        keep_technical=keep_technical,
+    )
 
     gravados: list[Path] = []
-    for nome in arquivos:
+    for item in selecionados:
+        nome, fornecedor, tipo = item["filename"], item["supplier"], item["tipo"]
+        destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
+        destino_dir.mkdir(parents=True, exist_ok=True)
         destino = attachments.unique_path(
             destino_dir / attachments.proposal_file_name(fornecedor, nome)
         )
@@ -319,6 +328,7 @@ def _baixar_anexos_abertos(
             path=str(destino) if baixou else None,
             code=codigo,
             supplier=fornecedor,
+            tipo=tipo,
             error=None if baixou else "não foi possível baixar pelo Outlook",
         )
 
@@ -376,6 +386,7 @@ def _deep_scan_message(
     processes: list[dict],
     base_dir: Path,
     result: ScanResult,
+    keep_technical: bool = False,
 ) -> None:
     """Varredura profunda: abre um e-mail não identificado e caça o código
     no corpo e dentro do anexo.
@@ -399,12 +410,12 @@ def _deep_scan_message(
     corpo = browser_client.read_message_body(page)
 
     with tempfile.TemporaryDirectory() as tmp:
-        baixados: list[tuple[str, Path]] = []
+        baixados: dict[str, Path] = {}
         textos_pdf: list[str] = []
         for nome in arquivos:
             alvo = Path(tmp) / attachments.file_name_for(nome)
             if browser_client.download_attachment(page, nome, alvo):
-                baixados.append((nome, alvo))
+                baixados[nome] = alvo
                 textos_pdf.append(pdf_text.extract_text(alvo))
 
         texto = " ".join(
@@ -418,9 +429,6 @@ def _deep_scan_message(
 
         codigo = matches[0]["code"]
         obra = next((p["obra"] for p in processes if p["code"] == codigo), None)
-        fornecedor = attachments.supplier_folder(
-            message.get("sender_name"), message.get("sender_email")
-        )
 
         result.deep_matches += 1
         novos = storage.add_message_codes(
@@ -433,14 +441,23 @@ def _deep_scan_message(
                 result.codes_found.get(match["code"], 0) + 1
             )
 
-        destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
-        destino_dir.mkdir(parents=True, exist_ok=True)
-        for nome, tmp_path in baixados:
+        # Fornecedor e tipo por arquivo, como no download normal, e a mesma
+        # preferência pela comercial.
+        selecionados = attachments.select_proposals(
+            list(baixados),
+            message.get("sender_name"),
+            message.get("sender_email"),
+            keep_technical=keep_technical,
+        )
+        for item in selecionados:
+            nome, fornecedor, tipo = item["filename"], item["supplier"], item["tipo"]
+            destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
+            destino_dir.mkdir(parents=True, exist_ok=True)
             destino = attachments.unique_path(
                 destino_dir / attachments.proposal_file_name(fornecedor, nome)
             )
             try:
-                shutil.move(str(tmp_path), str(destino))
+                shutil.move(str(baixados[nome]), str(destino))
                 gravou = True
             except Exception:  # noqa: BLE001 - falha ao mover não pode derrubar a varredura
                 gravou = False
@@ -452,6 +469,7 @@ def _deep_scan_message(
                 path=str(destino) if gravou else None,
                 code=codigo,
                 supplier=fornecedor,
+                tipo=tipo,
                 error=None if gravou else "não foi possível salvar o anexo",
             )
             if gravou:

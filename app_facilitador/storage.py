@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS attachments (
     path TEXT,
     code TEXT,
     supplier TEXT,
+    tipo TEXT,
     downloaded_at TEXT NOT NULL,
     error TEXT,
     PRIMARY KEY (conv_id, filename),
@@ -88,6 +89,7 @@ _MIGRATIONS = [
     ("processes", "deadline", "ALTER TABLE processes ADD COLUMN deadline TEXT"),
     ("proposal_codes", "matched_by", "ALTER TABLE proposal_codes ADD COLUMN matched_by TEXT"),
     ("messages", "folder", "ALTER TABLE messages ADD COLUMN folder TEXT"),
+    ("attachments", "tipo", "ALTER TABLE attachments ADD COLUMN tipo TEXT"),
 ]
 
 
@@ -358,23 +360,26 @@ def record_attachment(
     path: str | None,
     code: str | None,
     supplier: str | None,
+    tipo: str | None = None,
     error: str | None = None,
 ) -> None:
     """Registra um anexo baixado — ou a falha ao baixá-lo.
 
     Guardar também o que falhou é o que permite ao painel mostrar "esta
     proposta não veio", em vez de o arquivo simplesmente não existir e
-    ninguém notar.
+    ninguém notar. `tipo` marca comercial/técnica, para o painel destacar a
+    comercial (a que tem preço).
     """
     connection.execute(
         """
         INSERT INTO attachments
-            (conv_id, filename, path, code, supplier, downloaded_at, error)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (conv_id, filename, path, code, supplier, tipo, downloaded_at, error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(conv_id, filename) DO UPDATE SET
             path = excluded.path,
             code = excluded.code,
             supplier = excluded.supplier,
+            tipo = excluded.tipo,
             downloaded_at = excluded.downloaded_at,
             error = excluded.error
         """,
@@ -384,6 +389,7 @@ def record_attachment(
             path,
             code,
             supplier,
+            tipo,
             datetime.now().isoformat(timespec="seconds"),
             error,
         ),
@@ -429,7 +435,7 @@ def list_attachments(connection: sqlite3.Connection) -> list[dict]:
     """Propostas baixadas, das mais recentes para as mais antigas."""
     rows = connection.execute(
         """
-        SELECT a.conv_id, a.filename, a.path, a.code, a.supplier,
+        SELECT a.conv_id, a.filename, a.path, a.code, a.supplier, a.tipo,
                a.downloaded_at, a.error,
                m.sender_name, m.sender_email, m.subject, m.received_at_raw
         FROM attachments a

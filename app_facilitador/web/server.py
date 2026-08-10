@@ -149,12 +149,16 @@ def create_app() -> Flask:
         # Varredura profunda é opt-in (desmarcada por padrão): abre e lê
         # e-mails que não casaram, marcando-os como lidos.
         profunda = request.form.get("varredura_profunda") is not None
+        # Por padrão priorizamos a comercial (pulando a técnica quando as
+        # duas vêm juntas). Marcar traz a técnica também.
+        tecnica_tambem = request.form.get("baixar_tecnica") is not None
 
         scan_job.start(
             folder=folder,
             max_messages=max_messages,
             download_attachments=baixar,
             deep_scan=profunda,
+            keep_technical=tecnica_tambem,
         )
         return redirect(url_for("index"))
 

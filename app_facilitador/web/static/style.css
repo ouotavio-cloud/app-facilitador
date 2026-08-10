@@ -406,6 +406,10 @@ code {
 .selo-vencido { background: var(--vencido-fundo); color: var(--vencido); }
 .selo-sem_prazo { background: var(--neutro-fundo); color: var(--texto-fraco); }
 
+/* Comercial é o foco (tem preço): cor de destaque. Técnica fica discreta. */
+.selo-comercial { background: var(--ok-fundo); color: var(--ok); }
+.selo-tecnica { background: var(--neutro-fundo); color: var(--texto-fraco); }
+
 .selo-anexo {
   background: var(--neutro-fundo);
   color: var(--texto-fraco);

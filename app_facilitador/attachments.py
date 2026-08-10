@@ -87,6 +87,118 @@ def sanitize(name: str, fallback: str = "sem-nome") -> str:
     return limpo or fallback
 
 
+# Marcadores do tipo de proposta no nome do arquivo. Comercial é a que tem
+# preço — o foco de quem compra. "PT"/"PC" são a convenção da empresa do
+# usuário; as palavras por extenso cobrem outros fornecedores.
+_MARCADORES_COMERCIAL = ["proposta comercial", "comercial", "pc"]
+_MARCADORES_TECNICA = ["proposta tecnica", "tecnica", "pt"]
+
+# Todos os marcadores de tipo, para achar onde o nome do fornecedor começa
+# (a convenção é "... - PT - FORNECEDOR - R00").
+_MARCADORES_TIPO = _MARCADORES_COMERCIAL + _MARCADORES_TECNICA
+
+
+def _segmentos(nome_sem_extensao: str) -> list[str]:
+    """Quebra o nome do arquivo nos pedaços separados por ' - ' ou '_'."""
+    return [p.strip() for p in re.split(r"\s-\s|_", nome_sem_extensao) if p.strip()]
+
+
+# Palavras que marcam o tipo, casadas por palavra inteira para "pt"/"pc"
+# não pegarem no meio de outra palavra ("ptar", "pcte").
+_RE_COMERCIAL = re.compile(r"\b(pc|comercial)\b")
+_RE_TECNICA = re.compile(r"\b(pt|tecnica)\b")
+
+
+def classify_proposal(filename: str) -> str | None:
+    """Diz se o arquivo é a proposta "comercial", a "tecnica", ou None.
+
+    O comprador quer a comercial (com preço); a técnica costuma vir junto e
+    vira ruído. A comercial ganha do empate: se o nome indica comercial, é
+    comercial, mesmo que "tecnica" também apareça.
+    """
+    # Separadores viram espaço para "pt"/"pc" ficarem palavras isoladas,
+    # tanto em "... - PT - ..." quanto em "..._PC_...".
+    texto = re.sub(r"[-_]", " ", normalize_for_comparison(Path(filename or "").stem))
+    if _RE_COMERCIAL.search(texto):
+        return "comercial"
+    if _RE_TECNICA.search(texto):
+        return "tecnica"
+    return None
+
+
+def supplier_from_filename(filename: str) -> str | None:
+    """Nome do fornecedor tirado do próprio arquivo, se a convenção permitir.
+
+    Vale quando um e-mail traz propostas de vários fornecedores (comum em
+    e-mail interno de consolidação): o remetente é o mesmo, mas cada arquivo
+    é de uma empresa. A convenção da empresa é "... - PT - FORNECEDOR - R00",
+    então o fornecedor é o pedaço logo depois do marcador de tipo.
+
+    Devolve None quando não há marcador — aí o fornecedor sai do domínio do
+    e-mail, como antes.
+    """
+    segmentos = _segmentos(Path(filename or "").stem)
+    for i, segmento in enumerate(segmentos[:-1]):
+        if normalize_for_comparison(segmento) in _MARCADORES_TIPO:
+            candidato = segmentos[i + 1]
+            # "R00", "REV01" e afins são revisão, não fornecedor.
+            if re.fullmatch(r"(?i)r\d+|rev\s*\d+", candidato.strip()):
+                continue
+            return sanitize(candidato, fallback="Fornecedor")
+    return None
+
+
+def supplier_for(
+    sender_name: str | None, sender_email: str | None, filename: str | None = None
+) -> str:
+    """Fornecedor de um anexo: do nome do arquivo se der, senão do domínio.
+
+    O nome do arquivo vence porque é mais específico — num e-mail com
+    propostas de três fornecedores, o domínio do remetente é o mesmo para
+    todos, mas o nome de cada arquivo diz de quem ele é.
+    """
+    if filename:
+        do_arquivo = supplier_from_filename(filename)
+        if do_arquivo:
+            return do_arquivo
+    return supplier_folder(sender_name, sender_email)
+
+
+def select_proposals(
+    filenames: list[str],
+    sender_name: str | None,
+    sender_email: str | None,
+    keep_technical: bool = False,
+) -> list[dict]:
+    """Decide, para os anexos de um e-mail, quais baixar e de quem são.
+
+    Cada item devolvido traz `filename`, `supplier` e `tipo`. Quando
+    `keep_technical` é falso (padrão), a proposta técnica é descartada se o
+    mesmo fornecedor mandou também a comercial no mesmo e-mail — o foco é a
+    comercial, que tem preço. Se o fornecedor mandou só a técnica, ela é
+    mantida: melhor ter a técnica que não ter nada.
+    """
+    itens = [
+        {
+            "filename": nome,
+            "supplier": supplier_for(sender_name, sender_email, nome),
+            "tipo": classify_proposal(nome),
+        }
+        for nome in filenames
+    ]
+    if keep_technical:
+        return itens
+
+    tem_comercial = {
+        item["supplier"] for item in itens if item["tipo"] == "comercial"
+    }
+    return [
+        item
+        for item in itens
+        if not (item["tipo"] == "tecnica" and item["supplier"] in tem_comercial)
+    ]
+
+
 def supplier_folder(sender_name: str | None, sender_email: str | None) -> str:
     """Nome da pasta do fornecedor, a partir do remetente do e-mail.
 
@@ -207,7 +319,12 @@ def proposal_file_name(supplier: str, filename: str) -> str:
 
     prefixo = sanitize(supplier, fallback="Fornecedor")
 
-    if normalize_for_comparison(miolo).startswith(normalize_for_comparison(prefixo)):
+    # Não prefixa se o fornecedor já aparece no nome — muitas convenções
+    # (a da empresa do usuário, inclusive) já embutem o fornecedor no
+    # arquivo. Separadores viram espaço para o nome casar em "..._BERMAD_..."
+    # e em "... - BERMAD - ...".
+    miolo_norm = re.sub(r"[-_]", " ", normalize_for_comparison(miolo))
+    if re.sub(r"[-_]", " ", normalize_for_comparison(prefixo)) in miolo_norm:
         return limpo
 
     nome = f"{prefixo} - {miolo}"

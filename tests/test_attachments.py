@@ -140,6 +140,107 @@ class TestNomeComFornecedor:
         assert nome.endswith(".pdf")
 
 
+class TestTipoDaProposta:
+    def test_reconhece_a_tecnica_pela_sigla_pt(self):
+        assert attachments.classify_proposal("Engeform - 260722 - PT - BERMAD - R00.pdf") == "tecnica"
+
+    def test_reconhece_a_comercial_pela_sigla_pc(self):
+        assert attachments.classify_proposal("Engeform - 260722 - PC - BERMAD - R00.pdf") == "comercial"
+
+    def test_reconhece_por_extenso(self):
+        assert attachments.classify_proposal("Proposta Comercial Saint Gobain.pdf") == "comercial"
+        assert attachments.classify_proposal("proposta tecnica rts.pdf") == "tecnica"
+
+    def test_sem_marcador_fica_indefinida(self):
+        assert attachments.classify_proposal("661_SUP_VALVULAS_202607_R00.xlsx") is None
+
+    def test_comercial_ganha_do_empate(self):
+        """Se o nome cita as duas, a comercial (com preço) é o que interessa."""
+        assert attachments.classify_proposal("PT e PC comercial juntas.pdf") == "comercial"
+
+
+class TestFornecedorPeloArquivo:
+    def test_pega_o_fornecedor_depois_do_marcador(self):
+        assert (
+            attachments.supplier_from_filename("Engeform - 260722 - PT - BERMAD - R00.pdf")
+            == "BERMAD"
+        )
+
+    def test_fornecedor_com_espaco(self):
+        assert (
+            attachments.supplier_from_filename("Engeform - 260803 - PT - SAINT GOBAIN - R00.pdf")
+            == "SAINT GOBAIN"
+        )
+
+    def test_sem_marcador_devolve_none(self):
+        assert attachments.supplier_from_filename("proposta.pdf") is None
+
+    def test_pula_revisao_como_fornecedor(self):
+        # Se depois do marcador só vier a revisão, não é fornecedor.
+        assert attachments.supplier_from_filename("obra - PC - R00.pdf") is None
+
+    def test_supplier_for_prefere_o_arquivo_ao_dominio(self):
+        """Num e-mail interno, o domínio é do comprador; o arquivo diz o real."""
+        nome = "Engeform - 260722 - PT - BERMAD - R00.pdf"
+        assert (
+            attachments.supplier_for("Otávio", "otavio@engeform.com.br", nome) == "BERMAD"
+        )
+
+    def test_supplier_for_usa_dominio_quando_arquivo_nao_diz(self):
+        assert (
+            attachments.supplier_for("Marcos", "c@aciotubos.com.br", "proposta.pdf")
+            == "Aciotubos"
+        )
+
+
+class TestSelecaoDePropostas:
+    def _nomes(self, itens):
+        return [i["filename"] for i in itens]
+
+    def test_um_email_com_varios_fornecedores(self):
+        """O caso do print: três fornecedores num e-mail interno só."""
+        arquivos = [
+            "Engeform - 260722 - PT - BERMAD - R00.pdf",
+            "Engeform - 260729 - PT - RTS - R00.pdf",
+            "Engeform - 260803 - PT - SAINT GOBAIN - R00.pdf",
+        ]
+        itens = attachments.select_proposals(arquivos, "Otávio", "o@engeform.com.br")
+        fornecedores = {i["supplier"] for i in itens}
+        assert fornecedores == {"BERMAD", "RTS", "SAINT GOBAIN"}
+
+    def test_pula_a_tecnica_quando_ha_comercial_do_mesmo_fornecedor(self):
+        arquivos = [
+            "Obra - PT - BERMAD - R00.pdf",
+            "Obra - PC - BERMAD - R00.pdf",
+        ]
+        itens = attachments.select_proposals(arquivos, "Marcos", "c@bermad.com.br")
+        assert self._nomes(itens) == ["Obra - PC - BERMAD - R00.pdf"]
+
+    def test_mantem_a_tecnica_se_for_a_unica_do_fornecedor(self):
+        arquivos = ["Obra - PT - BERMAD - R00.pdf"]
+        itens = attachments.select_proposals(arquivos, "Marcos", "c@bermad.com.br")
+        assert len(itens) == 1
+
+    def test_keep_technical_mantem_as_duas(self):
+        arquivos = [
+            "Obra - PT - BERMAD - R00.pdf",
+            "Obra - PC - BERMAD - R00.pdf",
+        ]
+        itens = attachments.select_proposals(
+            arquivos, "Marcos", "c@bermad.com.br", keep_technical=True
+        )
+        assert len(itens) == 2
+
+    def test_tecnica_de_um_nao_some_por_comercial_de_outro(self):
+        """A comercial da BERMAD não pode apagar a técnica da RTS."""
+        arquivos = [
+            "Obra - PC - BERMAD - R00.pdf",
+            "Obra - PT - RTS - R00.pdf",
+        ]
+        itens = attachments.select_proposals(arquivos, "x", "x@engeform.com.br")
+        assert len(itens) == 2
+
+
 class TestArvoreDePastas:
     def test_obra_processo_fornecedor(self, tmp_path):
         destino = attachments.proposal_dir(

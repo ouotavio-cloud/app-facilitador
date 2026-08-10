@@ -411,6 +411,55 @@ def test_varredura_profunda_nao_arquiva_o_que_nao_casa(outlook, tmp_path):
     assert not (tmp_path / "Propostas").exists()
 
 
+def test_um_email_interno_arquiva_por_fornecedor_do_nome(outlook, tmp_path):
+    """O caso do print: e-mail do próprio domínio com propostas de 3 empresas."""
+    _cadastrar("SUP.2026-186", "661")
+    outlook["mensagens"] = [
+        _mensagem("c1", "Propostas SUP.2026-186", remetente="Otávio", email="o@engeform.com.br")
+    ]
+    outlook["pagina"] = _PaginaFalsa(
+        {
+            "c1": [
+                "Engeform - 260722 - PC - BERMAD - R00.pdf",
+                "Engeform - 260729 - PC - RTS - R00.pdf",
+                "Engeform - 260803 - PC - SAINT GOBAIN - R00.pdf",
+            ]
+        }
+    )
+
+    scanner.scan()
+
+    base = tmp_path / "Propostas" / "661" / "SUP.2026-186"
+    assert (base / "BERMAD").is_dir()
+    assert (base / "RTS").is_dir()
+    assert (base / "SAINT GOBAIN").is_dir()
+    # E nunca sob o próprio comprador.
+    assert not (base / "Engeform").exists()
+
+
+def test_pula_a_tecnica_quando_vem_com_a_comercial(outlook, tmp_path):
+    _cadastrar("SUP.2026-186", "661")
+    outlook["mensagens"] = [
+        _mensagem("c1", "Propostas SUP.2026-186", email="o@engeform.com.br")
+    ]
+    outlook["pagina"] = _PaginaFalsa(
+        {
+            "c1": [
+                "Engeform - PT - BERMAD - R00.pdf",
+                "Engeform - PC - BERMAD - R00.pdf",
+            ]
+        }
+    )
+
+    resultado = scanner.scan()
+
+    pasta = tmp_path / "Propostas" / "661" / "SUP.2026-186" / "BERMAD"
+    arquivos = [p.name for p in pasta.iterdir()]
+    assert any("PC" in a for a in arquivos)
+    assert not any("PT" in a for a in arquivos)
+    assert resultado.downloaded == 1
+
+
 def test_sem_varredura_profunda_email_nao_identificado_nao_e_aberto(outlook):
     """Sem deep scan, e-mail que não casou por assunto não é aberto (não marca lido)."""
     _cadastrar("SUP.2026-197")
