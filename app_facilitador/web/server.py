@@ -143,8 +143,24 @@ def create_app() -> Flask:
         folder = (request.form.get("pasta") or "").strip() or None
         limit_raw = (request.form.get("limite") or "").strip()
         max_messages = int(limit_raw) if limit_raw.isdigit() else None
+        # Checkbox marcado por padrão no HTML; quando desmarcado, o navegador
+        # simplesmente não envia o campo — daí a ausência significar "não".
+        baixar = request.form.get("baixar_anexos") is not None
 
-        scan_job.start(folder=folder, max_messages=max_messages)
+        scan_job.start(
+            folder=folder, max_messages=max_messages, download_attachments=baixar
+        )
+        return redirect(url_for("index"))
+
+    @app.post("/varredura/parar")
+    def stop_scan():
+        """Interrompe a varredura em andamento.
+
+        Existe porque uma varredura pode demorar ou tropeçar num e-mail que
+        se comporta de forma inesperada — sem uma saída, a única opção do
+        usuário seria fechar o app inteiro.
+        """
+        scan_job.stop()
         return redirect(url_for("index"))
 
     @app.get("/varredura/status")

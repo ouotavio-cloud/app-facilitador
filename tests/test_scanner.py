@@ -62,3 +62,13 @@ def test_summary_lines_reports_errors():
 
     assert "Itens com erro (ignorados): 1" in lines
     assert "  Assunto X: erro de leitura" in lines
+
+
+def test_summary_lines_flags_a_stopped_scan():
+    """Parar não é falha: o resultado parcial vale, mas o usuário precisa saber."""
+    result = scanner.ScanResult(scanned=42, stopped=True)
+
+    lines = result.summary_lines()
+
+    assert lines[0].startswith("Varredura interrompida por você")
+    assert "E-mails percorridos: 42" in lines

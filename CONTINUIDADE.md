@@ -30,6 +30,8 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 | 1.2 Arquivar em Obra/Processo/Fornecedor | Pronto (v6) |
 | 1.3 Baixar o anexo, varrendo a caixa inteira | Pronto (v6), com a ressalva abaixo |
 | 1.4 Avisar ao terminar a varredura | Pronto (resumo na tela) |
+| Botão de parar a varredura | Pronto (v7) |
+| Interruptor "baixar anexos" (liga/desliga o download) | Pronto (v7) |
 | 2.1 E-mails novos da "caixa real", mais recentes primeiro | Pronto |
 | 2.2 Reuniões do dia e horários | Pronto |
 | 2.3 Indicador de prazo do processo | Pronto |
@@ -106,6 +108,15 @@ e-mails que casam com processo cadastrado são abertos.
 **O download tem de acontecer durante a varredura.** A lista do Outlook é
 virtualizada: numa segunda passada a linha não está mais no DOM e não há
 onde clicar.
+
+**Não saia de um `expect_download` por `continue`.** Sair do bloco `with
+page.expect_download()` pela porta normal faz o Playwright *esperar* o
+download inteiro (o timeout todo) por um clique que talvez nunca tenha
+acontecido. Com timeout de 2 min e duas tentativas, cada anexo prendia o
+app por minutos — parecia travado. Para pular a espera, levante uma exceção
+de dentro do bloco (`_SemAcionador`). E separe o timeout de *começar* o
+download (curto, ~20 s) do de *terminar* (longo): um seletor errado precisa
+falhar rápido; um arquivo pesado precisa de tempo.
 
 **Dados do usuário nunca na pasta do programa.** No `.exe` ela é
 temporária e o Windows a apaga. Tudo em `%LOCALAPPDATA%\AppFacilitador`

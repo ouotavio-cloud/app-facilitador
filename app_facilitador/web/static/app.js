@@ -12,6 +12,8 @@ const elementoStatus = document.getElementById("status-varredura");
 const elementoResumo = document.getElementById("resumo-varredura");
 const barraVarredura = document.getElementById("barra-varredura");
 const botaoVarrer = document.getElementById("botao-varrer");
+const formParar = document.getElementById("form-parar");
+const botaoParar = document.getElementById("botao-parar");
 
 const avisoLogin = document.getElementById("aviso-login");
 const avisoAndamento = document.getElementById("aviso-login-andamento");
@@ -30,6 +32,9 @@ let conectado = document.body.dataset.conectado === "sim";
 
 function descreverVarredura(estado) {
   if (estado.running) {
+    if (estado.stopping) {
+      return "parando… (terminando o passo atual)";
+    }
     const pasta = estado.folder || "Caixa de Entrada";
     return `varrendo ${pasta} — ${estado.scanned} e-mails percorridos`;
   }
@@ -79,6 +84,13 @@ async function atualizarVarredura() {
   botaoVarrer.disabled = estado.running || !conectado;
   botaoVarrer.title = conectado ? "" : "Conecte o app ao Outlook primeiro";
   botaoVarrer.textContent = estado.running ? "Varrendo…" : "Varrer agora";
+
+  // O botão de parar só existe enquanto há o que parar. Depois de clicado,
+  // fica desabilitado e vira "Parando…" — o pedido já foi enviado, clicar
+  // de novo não adianta.
+  formParar.classList.toggle("oculto", !estado.running);
+  botaoParar.disabled = estado.stopping;
+  botaoParar.textContent = estado.stopping ? "Parando…" : "Parar varredura";
 
   mostrarResumo(estado);
 

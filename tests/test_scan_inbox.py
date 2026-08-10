@@ -165,3 +165,14 @@ def test_scan_inbox_terminates_when_items_have_no_conv_id():
     messages = list(browser_client.scan_inbox(page))
 
     assert len(messages) == 3
+
+
+def test_scan_inbox_stops_when_asked():
+    """O botão 'Parar' encerra a rolagem sem esperar a caixa inteira."""
+    page = FakePage([[_item(i)] for i in range(100)])
+
+    messages = list(browser_client.scan_inbox(page, should_stop=lambda: True))
+
+    # Pediu para parar antes do primeiro bloco: não rola nem produz nada.
+    assert messages == []
+    assert page.scroll_calls == 0

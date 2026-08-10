@@ -36,10 +36,14 @@ class ScanResult:
     processes_tracked: int = 0
     downloaded: int = 0
     download_failures: int = 0
+    stopped: bool = False
 
     def summary_lines(self) -> list[str]:
-        lines = [
-            f"Pasta: {self.folder or 'Caixa de Entrada'}",
+        lines = []
+        if self.stopped:
+            lines.append("Varredura interrompida por você — resultado parcial:")
+        lines.append(f"Pasta: {self.folder or 'Caixa de Entrada'}")
+        lines += [
             f"Processos acompanhados: {self.processes_tracked}",
             f"E-mails percorridos: {self.scanned}",
             f"Novos (ainda não registrados): {self.new_messages}",
@@ -70,6 +74,7 @@ def scan(
     folder: str | None = None,
     on_progress: Callable[[int], None] | None = None,
     download_attachments: bool = True,
+    should_stop: Callable[[], bool] | None = None,
 ) -> ScanResult:
     """Percorre uma pasta de e-mail e registra o que encontrar.
 
@@ -86,6 +91,10 @@ def scan(
     com um processo cadastrado. Fica ligado por padrão porque é o que o
     usuário pediu, mas é desligável: baixar exige **abrir** cada e-mail,
     e abrir o marca como lido no Outlook.
+
+    `should_stop`, quando devolve True, encerra a varredura de forma limpa
+    e devolve o resultado parcial (`ScanResult.stopped`). É o que o botão
+    "Parar" da tela usa para o usuário abortar sem fechar o app.
     """
     result = ScanResult(folder=folder)
     last_reported = 0
@@ -113,8 +122,14 @@ def scan(
                 browser_client.open_folder(page, folder)
 
             for message in browser_client.scan_inbox(
-                page, max_messages=max_messages, on_progress=report_progress
+                page,
+                max_messages=max_messages,
+                on_progress=report_progress,
+                should_stop=should_stop,
             ):
+                if should_stop is not None and should_stop():
+                    result.stopped = True
+                    break
                 result.scanned += 1
                 try:
                     matches = _process_message(

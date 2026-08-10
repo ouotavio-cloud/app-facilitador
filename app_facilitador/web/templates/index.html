@@ -107,7 +107,15 @@
       Limite
       <input type="number" name="limite" min="1" placeholder="tudo" style="width: 7rem">
     </label>
+    <label class="opcao-inline" title="Abre cada e-mail de proposta para baixar o anexo (e o marca como lido). Desligue para só identificar as propostas.">
+      <input type="checkbox" name="baixar_anexos" checked>
+      Baixar anexos
+    </label>
     <button type="submit" id="botao-varrer">Varrer agora</button>
+  </form>
+
+  <form method="post" action="{{ url_for('stop_scan') }}" id="form-parar" class="oculto">
+    <button type="submit" id="botao-parar" class="botao-secundario botao-parar">Parar varredura</button>
   </form>
 
   <div id="barra-varredura" class="barra oculto"></div>

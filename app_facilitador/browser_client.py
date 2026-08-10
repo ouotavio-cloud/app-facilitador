@@ -429,6 +429,7 @@ def scan_inbox(
     page: Page,
     max_messages: int | None = None,
     on_progress: Callable[[int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> Iterator[dict]:
     """Percorre a caixa de entrada inteira, rolando a lista, e produz cada e-mail.
 
@@ -441,6 +442,9 @@ def scan_inbox(
     A deduplicação é por `conv_id` (o `data-convid` do Outlook), porque os
     itens já vistos continuam reaparecendo na extração enquanto estiverem
     renderizados.
+
+    `should_stop`, quando devolve True, encerra a rolagem entre um bloco e
+    o próximo — é o que dá efeito ao botão "Parar" da tela.
     """
     selector, _ = _find_message_items(page)
     if selector is None:
@@ -450,6 +454,8 @@ def scan_inbox(
     stagnant_rounds = 0
 
     while stagnant_rounds < _STAGNANT_ROUNDS_BEFORE_STOP:
+        if should_stop is not None and should_stop():
+            return
         raw_items = page.evaluate(_JS_EXTRACT_ALL_ITEMS, selector)
         found_new = False
 
@@ -487,9 +493,19 @@ def scan_inbox(
 # Quanto esperar o e-mail abrir no painel de leitura.
 _MESSAGE_OPEN_TIMEOUT_MS = 20_000
 
-# Quanto esperar o arquivo terminar de baixar. Proposta com projeto
-# costuma ser pesada, e a rede da obra nem sempre ajuda.
-_DOWNLOAD_TIMEOUT_MS = 120_000
+# Quanto esperar o download COMEÇAR depois do clique. Curto de propósito:
+# um clique no acionador certo dispara o download em segundos. Se nada
+# começa nesse tempo, o botão tentado estava errado — e é melhor falhar
+# rápido e tentar a próxima forma do que pendurar o app. Era aqui que a
+# varredura travava: com um timeout de 2 minutos por tentativa, cada
+# e-mail com proposta prendia o app por minutos esperando um download que
+# nunca vinha, porque os seletores do painel de leitura não bateram.
+#
+# O tempo de o arquivo terminar de baixar não é limitado aqui: uma vez
+# começado, `save_as` espera o quanto for (proposta com projeto é pesada e
+# a rede da obra nem sempre ajuda). O risco de um download começar e travar
+# para sempre existe, mas é raro perto do de um seletor errado.
+_DOWNLOAD_START_TIMEOUT_MS = 20_000
 
 # Localiza os anexos pelo nome do arquivo, e não por classe de CSS.
 #
@@ -565,6 +581,16 @@ def find_attachments(page: Page, extensions: list[str]) -> list[str]:
     return page.evaluate(_JS_FIND_ATTACHMENTS, extensions)
 
 
+class _SemAcionador(Exception):
+    """O botão/menu de baixar não foi encontrado — não há download a esperar.
+
+    Existe para sair de dentro do `expect_download` por exceção, e não por
+    `continue`: sair pela porta normal faria o `expect_download` esperar o
+    download inteiro (o timeout todo) por um clique que nunca aconteceu.
+    Levantar uma exceção faz o `expect_download` desistir na hora.
+    """
+
+
 def download_attachment(page: Page, filename: str, destino) -> bool:
     """Baixa um anexo já localizado por `find_attachments`.
 
@@ -572,6 +598,13 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
     de arquivo e do tamanho da janela, ele aparece ao passar o mouse, ou
     fica escondido num menu "mais ações". Tentamos as duas formas, do
     caminho mais curto para o mais longo.
+
+    Cada tentativa espera o download **começar** por um tempo curto
+    (`_DOWNLOAD_START_TIMEOUT_MS`): se o acionador certo foi clicado, o
+    Outlook dispara o download em segundos. Só depois de começado é que
+    esperamos o arquivo terminar, aí sim com folga. Sem essa separação, um
+    seletor errado prendia o app pelo timeout inteiro a cada anexo — foi o
+    que travava a varredura ao chegar numa proposta.
     """
     alvo = page.locator(f'[data-facilitador-anexo="{filename}"]').first
     if alvo.count() == 0:
@@ -585,12 +618,14 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
 
     for tentativa in (_baixar_pelo_botao, _baixar_pelo_menu):
         try:
-            with page.expect_download(timeout=_DOWNLOAD_TIMEOUT_MS) as download:
+            with page.expect_download(timeout=_DOWNLOAD_START_TIMEOUT_MS) as download:
                 if not tentativa(page, alvo):
-                    continue
+                    raise _SemAcionador
             download.value.save_as(str(destino))
             return True
-        except Exception:  # noqa: BLE001 - tenta a próxima forma
+        except _SemAcionador:
+            continue
+        except Exception:  # noqa: BLE001 - timeout ou clique sem efeito; tenta a próxima forma
             continue
 
     return False

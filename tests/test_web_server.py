@@ -254,6 +254,34 @@ def test_scan_status_endpoint_reports_idle_state(client):
 
     assert status["running"] is False
     assert status["scanned"] == 0
+    assert status["stopping"] is False
+
+
+def test_stop_scan_route_signals_the_job(client, monkeypatch):
+    """O botão 'Parar' precisa chegar até o job da varredura."""
+    chamou = []
+    monkeypatch.setattr(server.scan_job, "stop", lambda: chamou.append(True))
+
+    response = client.post("/varredura/parar")
+
+    assert response.status_code in (302, 303)
+    assert chamou == [True]
+
+
+def test_scan_form_passes_the_download_toggle(client, monkeypatch):
+    """Desmarcar 'Baixar anexos' precisa realmente desligar o download."""
+    args = {}
+    monkeypatch.setattr(
+        server.scan_job, "start", lambda **kw: args.update(kw) or True
+    )
+
+    # Checkbox desmarcado: o navegador não envia o campo.
+    client.post("/varredura", data={"pasta": "caixa real"})
+    assert args["download_attachments"] is False
+
+    # Checkbox marcado: envia o campo.
+    client.post("/varredura", data={"pasta": "caixa real", "baixar_anexos": "on"})
+    assert args["download_attachments"] is True
 
 
 def test_folder_filter_narrows_the_recent_list(client):

@@ -27,6 +27,10 @@ class JobState:
     finished_at: datetime | None = None
     error: str | None = None
     summary: list[str] = field(default_factory=list)
+    # Sinalizado quando o usuário pediu para parar mas a varredura ainda
+    # não chegou ao próximo ponto de parada — deixa a tela dizer "parando…"
+    # em vez de parecer travada no clique.
+    stopping: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -37,6 +41,7 @@ class JobState:
             "finished_at": self.finished_at.strftime("%H:%M:%S") if self.finished_at else None,
             "error": self.error,
             "summary": self.summary,
+            "stopping": self.stopping,
         }
 
 
@@ -47,6 +52,7 @@ class ScanJob:
         self._lock = threading.Lock()
         self._state = JobState()
         self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
 
     @property
     def state(self) -> JobState:
@@ -57,7 +63,12 @@ class ScanJob:
         with self._lock:
             return self._state.running
 
-    def start(self, folder: str | None = None, max_messages: int | None = None) -> bool:
+    def start(
+        self,
+        folder: str | None = None,
+        max_messages: int | None = None,
+        download_attachments: bool = True,
+    ) -> bool:
         """Dispara a varredura. Devolve False se já houver uma em andamento.
 
         Recusar em vez de enfileirar é proposital: duas varreduras
@@ -69,18 +80,36 @@ class ScanJob:
                 return False
             self._state = JobState(running=True, folder=folder, started_at=datetime.now())
 
+        self._stop.clear()
         self._thread = threading.Thread(
-            target=self._run, args=(folder, max_messages), daemon=True
+            target=self._run, args=(folder, max_messages, download_attachments), daemon=True
         )
         self._thread.start()
         return True
 
-    def _run(self, folder: str | None, max_messages: int | None) -> None:
+    def stop(self) -> None:
+        """Pede para a varredura parar no próximo ponto seguro.
+
+        A parada é cooperativa: a thread verifica o sinal entre um bloco de
+        e-mails e o próximo, então pode levar alguns segundos até um passo
+        em andamento (abrir um e-mail, baixar um anexo) terminar. Por isso
+        a tela mostra "parando…" em vez de dar como parado na hora.
+        """
+        with self._lock:
+            if self._state.running:
+                self._state.stopping = True
+        self._stop.set()
+
+    def _run(
+        self, folder: str | None, max_messages: int | None, download_attachments: bool
+    ) -> None:
         try:
             result = scanner.scan(
                 folder=folder,
                 max_messages=max_messages,
                 on_progress=self._update_progress,
+                should_stop=self._stop.is_set,
+                download_attachments=download_attachments,
             )
             summary = result.summary_lines()
             error = None
@@ -90,6 +119,7 @@ class ScanJob:
 
         with self._lock:
             self._state.running = False
+            self._state.stopping = False
             self._state.finished_at = datetime.now()
             self._state.summary = summary
             self._state.error = error

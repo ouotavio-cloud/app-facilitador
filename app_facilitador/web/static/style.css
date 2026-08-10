@@ -267,6 +267,16 @@ body {
   letter-spacing: 0.035em;
 }
 
+/* Um interruptor liga/desliga fica lado a lado com o rótulo, não empilhado
+   como os campos de texto. */
+.linha-form label.opcao-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  padding-bottom: 0.48rem;
+}
+.opcao-inline input { width: auto; }
+
 input, select {
   padding: 0.48rem 0.65rem;
   border: 1px solid var(--borda-forte);
@@ -308,6 +318,15 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 
 .botao-secundario:hover { background: var(--borda); color: var(--texto); }
+
+/* O parar é uma ação de recuo: cor de alerta, discreta, aparece só quando
+   a varredura está rodando (o form fica oculto fora disso). */
+.botao-parar {
+  margin-top: 0.75rem;
+  background: var(--vencido-fundo);
+  color: var(--vencido);
+}
+.botao-parar:hover { background: var(--vencido); color: #fff; }
 
 .botao-texto {
   background: none;
