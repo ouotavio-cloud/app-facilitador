@@ -250,6 +250,38 @@ def test_falha_no_download_fica_registrada(outlook):
     assert anexos[0]["path"] is None
 
 
+def test_falha_no_download_nao_deixa_pasta_vazia(outlook, tmp_path):
+    """Foi o que o usuário viu: a árvore da proposta montada e vazia.
+
+    Uma pasta `Obra/Processo/Fornecedor` sem nada dentro afirma que a
+    proposta chegou. Quando o download falha, o certo é não haver pasta —
+    a pendência aparece no resumo e no registro de anexos.
+    """
+    _cadastrar("SUP.2026-186", "661")
+    outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-186")]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]}, falhar_download=True)
+
+    resultado = scanner.scan()
+
+    assert resultado.download_failures == 1
+    assert not (tmp_path / "Propostas" / "661").exists()
+
+
+def test_varredura_recolhe_pastas_vazias_que_ja_existiam(outlook, tmp_path):
+    """Faxina do estrago das versões anteriores, sem tocar no que tem arquivo."""
+    propostas = tmp_path / "Propostas"
+    (propostas / "661" / "SUP.2026-186" / "Engeform").mkdir(parents=True)
+    guardada = propostas / "657" / "SUP.2026-197" / "Molivetto2"
+    guardada.mkdir(parents=True)
+    (guardada / "Molivetto2 - Proposta.pdf").write_text("proposta de verdade")
+
+    resultado = scanner.scan()
+
+    assert not (propostas / "661").exists()
+    assert (guardada / "Molivetto2 - Proposta.pdf").exists()
+    assert resultado.empty_dirs_removed == 3
+
+
 def test_falha_no_download_salva_html_para_diagnostico(outlook):
     """Sem o HTML real do painel, calibrar o download é adivinhação."""
     _cadastrar("SUP.2026-197")

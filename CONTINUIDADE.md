@@ -42,6 +42,80 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 | 2.3 Indicador de prazo do processo | Pronto |
 | 3 Sugestões adicionais | Listadas, nenhuma implementada |
 
+## RESOLVIDO (v13): o download errava o alvo e fixava e-mails
+
+O usuário mandou `app.log`, o banco e o `diagnostico-anexo.html` **com a
+estrutura certa** (o relatório por anexo que a v12 passou a salvar). Com
+isso o defeito parou de ser palpite: dá para rodar o JavaScript de produção
+contra a página real e ver o que ele devolve. **Uma causa só explicava os
+três sintomas** que ele relatou — pastas vazias, não baixa, fixa e-mail.
+
+`_JS_FIND_ATTACHMENTS` varria `[aria-label], [title]` da **página inteira**
+atrás de qualquer rótulo terminado em `.pdf`/`.xlsx`. Só que as **linhas da
+lista de mensagens** também exibem o nome dos arquivos que cada e-mail
+carrega. Rodando o JS antigo na página real dele: 7 "anexos", dos quais só 4
+eram do e-mail aberto — e os outros 4 caíram na linha da lista. Daí em
+diante:
+
+- **anexo do e-mail errado** — arquivo de outra conversa arquivado na pasta
+  desta (bate com o `app.log` das 15:02, em que um e-mail com 1 anexo
+  aparece com 5);
+- **fixou e-mail** — marcada a linha, `_baixar_pelo_menu` não achava
+  `aria-haspopup` e caía na reserva "clica no último botão do alvo". Numa
+  linha de mensagem o último botão é **"Manter esta mensagem na parte
+  superior de sua pasta"**. Cada anexo que o app tentava baixar fixava um
+  e-mail;
+- **pasta vazia** — o `scanner` criava `Obra/Processo/Fornecedor` ao montar
+  o caminho, antes de saber se o arquivo viria. Download falhando, sobrava a
+  árvore montada e vazia.
+
+O que separa um do outro, conferido no HTML real: linha de mensagem tem
+`data-convid` e **nenhum** `aria-haspopup`; cartão de anexo tem
+`aria-haspopup` (a setinha ˅ "Mais ações") e **nenhum** `data-convid`, e
+vive num `[role="listbox"][aria-label="anexos de arquivo"]`. Feito na v13:
+
+- `_JS_FIND_ATTACHMENTS` parte do **cartão** (`[role="option"]` com setinha,
+  fora de `[data-convid]`), não do nome do arquivo, e **limpa as marcas do
+  e-mail anterior** antes de marcar;
+- `_baixar_pelo_menu` perdeu a reserva do "último botão" — sem setinha,
+  desiste. Clique às cegas em caixa de e-mail alheia não tem como ser seguro;
+- `_baixar_pelo_botao` procura só **dentro do cartão** (antes varria a página
+  e podia acertar o "Baixar tudo", salvando o pacote inteiro como se fosse a
+  proposta de um fornecedor);
+- a pasta nasce **depois** de o download começar, e a varredura recolhe as
+  pastas vazias que ficaram (`attachments.remove_empty_dirs`);
+- marca perdida (o Outlook remonta o painel sozinho) agora é **refeita** em
+  vez de derrubar o e-mail inteiro — era o "não foi marcado na página" que
+  aparecia 4-5 vezes no mesmo segundo no log;
+- Esc fecha o menu que uma tentativa falha deixava aberto por cima da tela.
+
+**Teste que trava isso:** `tests/test_find_attachments_dom.py` roda o JS de
+produção num Chromium de verdade contra um HTML com a estrutura real (papéis,
+atributos e a ordem dos botões da linha copiados do diagnóstico; conteúdo
+inventado, para não guardar e-mail de ninguém no repositório). Ele se pula
+quando não há navegador — a CI compila antes de instalar o Chromium.
+
+**Desafixar os e-mails que sobraram fixados (v13, mesma leva):** o app não
+sabe quais foram atingidos — `save_message` usa `ON CONFLICT DO NOTHING`,
+então `is_pinned` congela na primeira vez que a conversa é vista e não
+registrou as fixadas depois. Em vez de pedir para o usuário desafixar um por
+um no Outlook, o painel ganhou uma seção "Desafixar e-mails" que percorre a
+pasta ao vivo (o estado "Fixado" vem fresco do DOM a cada e-mail,
+`scanner.unpin_all`) e desafixa o que reconhece com segurança.
+
+**Ressalva importante:** não há captura real do rótulo do botão já
+FIXADO — só vimos, no diagnóstico, o rótulo de "Manter esta mensagem..."
+quando a mensagem ainda não estava fixada. `browser_client._find_unpin_control`
+cobre as variações mais prováveis ("não manter", "desafixar", "remover
+fixado" etc.) e, como reserva, `aria-pressed="true"` no mesmo botão. Segue a
+mesma disciplina que corrigiu o bug original: **nunca** cai para "o botão
+que houver" — sem rótulo reconhecível, pula o e-mail e lista o assunto para
+o usuário resolver à mão. Se a busca voltar com muita coisa em
+"não identificado", é sinal de que o rótulo real é outro — peça um
+`app.log` depois de rodar (`unpin_message` grava o que tentou e o que
+pulou) e, se precisar, uma captura de uma linha fixada para calibrar
+igual foi feito com os anexos.
+
 ## Download falhando — pista do cache do usuário (v12)
 
 O usuário mandou o banco real: **21 anexos falharam** ("não foi possível
@@ -91,21 +165,22 @@ Pedidos do usuário depois da v10, **em ordem**:
 
 ## O que fazer a seguir, em ordem
 
-### 1. Confirmar que o download funciona de verdade
+### 1. Confirmar a v13 na caixa real
 
-**É o próximo passo e o mais importante.** O download de anexos foi
-escrito sem nunca ter sido testado contra o Outlook real — não tenho
-acesso à caixa do usuário, e diferente do resto do app (calibrado contra
-HTML real que ele colou), a estrutura do painel de leitura é palpite.
+O seletor de anexo **deixou de ser palpite**: agora é conferido contra o
+`diagnostico-anexo.html` da caixa dele, e o teste roda o JS de produção num
+Chromium de verdade. Mas quem prova é o Outlook, não o teste.
 
-Peça a ele: cadastrar um processo que tenha proposta com anexo, rodar a
-varredura, e dizer se o arquivo apareceu na pasta.
+Peça a ele: rodar a varredura e dizer três coisas —
+1. **os arquivos apareceram** dentro de `Obra/Processo/Fornecedor`;
+2. **nenhum e-mail novo foi fixado** (os já fixados são das versões
+   anteriores; ver o fim da seção da v13);
+3. **não sobrou pasta vazia** — a varredura recolhe as antigas e informa
+   quantas no resumo.
 
-Se não funcionar, o caminho é o mesmo que já resolveu isso duas vezes
-neste projeto: pedir o HTML real. `browser_client.dump_message_debug()`
-salva o painel de leitura inteiro. Com esse HTML dá para acertar os
-seletores em `_JS_FIND_ATTACHMENTS`, `_baixar_pelo_botao` e
-`_baixar_pelo_menu`.
+Se ainda falhar, o caminho é o mesmo de sempre: `app.log` +
+`diagnostico-anexo.html` novos. O relatório por anexo do dump traz os
+controles ao redor de cada arquivo, que é o que permite acertar o clique.
 
 ### 2. Apelido de fornecedor (próximo pedido do usuário)
 
@@ -170,6 +245,23 @@ terminava. Mantenha a saída manual.
 
 **Não abra e-mails em massa.** Abrir marca como lido no Outlook dele. Só
 e-mails que casam com processo cadastrado são abertos.
+
+**Nunca clique "o primeiro/último botão que houver" num alvo.** Foi assim
+que o app passou a fixar e-mails: sem `aria-haspopup`, `_baixar_pelo_menu`
+caía no último botão do alvo, e numa linha da lista de mensagens o último
+botão é "Manter esta mensagem na parte superior de sua pasta". Os botões de
+uma linha são fixar, sinalizar e marcar como não lido — nenhum é inofensivo.
+Clique em controle **identificado** (por papel ou rótulo) ou não clique.
+
+**Não procure anexo pelo nome do arquivo na página inteira.** As linhas da
+lista de mensagens também exibem o nome dos arquivos que cada e-mail carrega:
+varrer tudo mistura anexo de conversas diferentes e faz o app mirar a linha
+em vez do anexo. Parta do **cartão** (`[role="option"]` com setinha, fora de
+`[data-convid]`). Ver v13 acima.
+
+**Não crie a pasta de destino antes de o download começar.** Pasta vazia
+afirma que a proposta está lá. Quem cria é `download_attachment`, com o
+arquivo já vindo.
 
 **O download tem de acontecer durante a varredura.** A lista do Outlook é
 virtualizada: numa segunda passada a linha não está mais no DOM e não há

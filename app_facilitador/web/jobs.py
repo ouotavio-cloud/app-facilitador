@@ -141,6 +141,102 @@ class ScanJob:
 
 
 @dataclass
+class UnpinState:
+    """Situação da busca de e-mails fixados, do ponto de vista da tela."""
+
+    running: bool = False
+    folder: str | None = None
+    scanned: int = 0
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    summary: list[str] = field(default_factory=list)
+    stopping: bool = False
+
+    def as_dict(self) -> dict:
+        return {
+            "running": self.running,
+            "folder": self.folder,
+            "scanned": self.scanned,
+            "started_at": self.started_at.strftime("%H:%M:%S") if self.started_at else None,
+            "finished_at": self.finished_at.strftime("%H:%M:%S") if self.finished_at else None,
+            "error": self.error,
+            "summary": self.summary,
+            "stopping": self.stopping,
+        }
+
+
+class UnpinJob:
+    """Guarda a busca de e-mails fixados em andamento e o resultado da última.
+
+    Mesma forma do `ScanJob` — thread em segundo plano, progresso
+    consultável, parada cooperativa — porque a operação em si é a mesma
+    coisa por baixo (percorrer uma pasta abrindo e clicando em cada
+    e-mail), só que decidindo desafixar em vez de baixar.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._state = UnpinState()
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    @property
+    def state(self) -> UnpinState:
+        with self._lock:
+            return self._state
+
+    def is_running(self) -> bool:
+        with self._lock:
+            return self._state.running
+
+    def start(self, folder: str | None = None, max_messages: int | None = None) -> bool:
+        """Dispara a busca. Devolve False se já houver uma em andamento."""
+        with self._lock:
+            if self._state.running:
+                return False
+            self._state = UnpinState(running=True, folder=folder, started_at=datetime.now())
+
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run, args=(folder, max_messages), daemon=True
+        )
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        with self._lock:
+            if self._state.running:
+                self._state.stopping = True
+        self._stop.set()
+
+    def _run(self, folder: str | None, max_messages: int | None) -> None:
+        try:
+            result = scanner.unpin_all(
+                folder=folder,
+                max_messages=max_messages,
+                on_progress=self._update_progress,
+                should_stop=self._stop.is_set,
+            )
+            summary = result.summary_lines()
+            error = None
+        except Exception as exc:  # noqa: BLE001 - a falha precisa chegar à tela
+            summary = []
+            error = str(exc)
+
+        with self._lock:
+            self._state.running = False
+            self._state.stopping = False
+            self._state.finished_at = datetime.now()
+            self._state.summary = summary
+            self._state.error = error
+
+    def _update_progress(self, scanned: int) -> None:
+        with self._lock:
+            self._state.scanned = scanned
+
+
+@dataclass
 class LoginState:
     """Situação da conexão com o Outlook, para a tela acompanhar."""
 

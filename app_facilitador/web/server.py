@@ -16,7 +16,7 @@ from flask import Flask, flash, jsonify, redirect, render_template, request, url
 
 from app_facilitador import browser_client, calendar_client, config, deadlines, paths
 from app_facilitador import proposal_detector, scanner, storage
-from app_facilitador.web.jobs import LoginJob, MeetingsJob, ScanJob
+from app_facilitador.web.jobs import LoginJob, MeetingsJob, ScanJob, UnpinJob
 
 HOST = "127.0.0.1"
 
@@ -29,14 +29,15 @@ PORT_ATTEMPTS = 20
 scan_job = ScanJob()
 login_job = LoginJob()
 meetings_job = MeetingsJob()
+unpin_job = UnpinJob()
 
 
 def _browser_busy() -> str | None:
     """O que está usando o navegador agora, ou None se estiver livre.
 
-    As três operações (conectar, varrer, ler o calendário) abrem uma
-    janela cada. Duas ao mesmo tempo disputariam a mesma sessão do
-    Outlook e uma atrapalharia a outra — melhor recusar e dizer por quê.
+    As quatro operações (conectar, varrer, ler o calendário, desafixar)
+    abrem uma janela cada. Duas ao mesmo tempo disputariam a mesma sessão
+    do Outlook e uma atrapalharia a outra — melhor recusar e dizer por quê.
     """
     if login_job.state.running:
         return "conectando ao Outlook"
@@ -44,6 +45,8 @@ def _browser_busy() -> str | None:
         return "varrendo seus e-mails"
     if meetings_job.state.running:
         return "lendo seu calendário"
+    if unpin_job.state.running:
+        return "desafixando e-mails"
     return None
 
 
@@ -205,6 +208,34 @@ def create_app() -> Flask:
     @app.get("/varredura/status")
     def scan_status():
         return jsonify(scan_job.state.as_dict())
+
+    @app.post("/desafixar")
+    def start_unpin():
+        """Busca e desafixa os e-mails que ficaram fixados por engano.
+
+        Sequela de um bug já corrigido (ver CONTINUIDADE.md): versões
+        anteriores do app, tentando baixar um anexo, clicavam sem querer em
+        "Manter esta mensagem na parte superior de sua pasta". O app não
+        registrou quais e-mails isso atingiu, então esta busca é ao vivo —
+        percorre a pasta e desafixa o que reconhece com segurança.
+        """
+        ocupado = _browser_busy()
+        if ocupado:
+            flash(f"O app já está {ocupado}. Espere terminar e tente de novo.")
+            return redirect(url_for("index"))
+
+        folder = (request.form.get("pasta") or "").strip() or None
+        unpin_job.start(folder=folder)
+        return redirect(url_for("index"))
+
+    @app.post("/desafixar/parar")
+    def stop_unpin():
+        unpin_job.stop()
+        return redirect(url_for("index"))
+
+    @app.get("/desafixar/status")
+    def unpin_status():
+        return jsonify(unpin_job.state.as_dict())
 
     @app.post("/login")
     def start_login():

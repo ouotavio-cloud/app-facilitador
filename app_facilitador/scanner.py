@@ -48,6 +48,9 @@ class ScanResult:
     # fiscal, contrato, habilitação) — não são abertos nem baixados.
     skipped_non_proposal: int = 0
     stopped: bool = False
+    # Pastas vazias levadas embora no fim da varredura — sobras das versões
+    # que criavam a árvore da proposta antes de saber se o download daria certo.
+    empty_dirs_removed: int = 0
     # Caminho de um HTML do painel de leitura salvo quando um download
     # falha — é o que permite calibrar os seletores sem outra compilação.
     debug_dump: str | None = None
@@ -76,6 +79,11 @@ class ScanResult:
             lines.append(
                 f"E-mails pulados por não serem proposta (nota/contrato/habilitação): "
                 f"{self.skipped_non_proposal}"
+            )
+        if self.empty_dirs_removed:
+            lines.append(
+                f"Pastas vazias removidas (sobra de downloads que falharam): "
+                f"{self.empty_dirs_removed}"
             )
         if self.download_failures:
             lines.append(f"Anexos que não deu para baixar: {self.download_failures}")
@@ -219,6 +227,11 @@ def scan(
                         f"anexo de {message.get('subject', '(sem assunto)')}: {error}"
                     )
 
+        # Varre a pasta de propostas no fim para levar embora as árvores
+        # vazias deixadas pelas versões anteriores do app, que criavam a
+        # pasta antes de o download dar certo.
+        result.empty_dirs_removed = attachments.remove_empty_dirs(pasta_propostas)
+
     _log.info(
         "varredura concluída — %d e-mails, %d baixados, %d falhas%s",
         result.scanned, result.downloaded, result.download_failures,
@@ -344,7 +357,10 @@ def _baixar_anexos_abertos(
     for item in selecionados:
         nome, fornecedor, tipo = item["filename"], item["supplier"], item["tipo"]
         destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
-        destino_dir.mkdir(parents=True, exist_ok=True)
+        # A pasta não é criada aqui: quem a cria é o download, depois de o
+        # arquivo já estar vindo (ver `browser_client.download_attachment`).
+        # Criá-la junto com o caminho deixava uma árvore vazia por cada
+        # download que falhava.
         destino = attachments.unique_path(
             destino_dir / attachments.proposal_file_name(fornecedor, nome)
         )
@@ -477,6 +493,100 @@ def _salvar_diagnostico(page, result: ScanResult) -> None:
         result.debug_dump = str(destino)
     except Exception:  # noqa: BLE001 - diagnóstico é melhor-esforço, não pode derrubar a varredura
         pass
+
+
+@dataclass
+class UnpinResult:
+    """Resumo de uma rodada de desafixar e-mails."""
+
+    scanned: int = 0
+    pinned_found: int = 0
+    unpinned: int = 0
+    # Assuntos dos e-mails fixados que o app não conseguiu reconhecer com
+    # segurança — ficam para o usuário desafixar à mão.
+    not_identified: list[str] = field(default_factory=list)
+    folder: str | None = None
+    stopped: bool = False
+
+    def summary_lines(self) -> list[str]:
+        lines = []
+        if self.stopped:
+            lines.append("Busca interrompida por você — resultado parcial:")
+        lines.append(f"Pasta: {self.folder or DEFAULT_FOLDER_NAME}")
+        lines += [
+            f"E-mails percorridos: {self.scanned}",
+            f"Fixados encontrados: {self.pinned_found}",
+            f"Desafixados: {self.unpinned}",
+        ]
+        if self.not_identified:
+            lines.append(
+                f"Não consegui identificar o botão em {len(self.not_identified)} "
+                "e-mail(s) — desafixe à mão pelo Outlook:"
+            )
+            for subject in self.not_identified[:10]:
+                lines.append(f"  {subject}")
+        elif self.pinned_found and not self.stopped:
+            lines.append("Nenhum e-mail fixado sobrou por identificar.")
+        return lines
+
+
+def unpin_all(
+    max_messages: int | None = None,
+    headless: bool = False,
+    folder: str | None = None,
+    on_progress: Callable[[int], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> UnpinResult:
+    """Percorre uma pasta e desafixa os e-mails que estiverem fixados agora.
+
+    Existe para desfazer o estrago de um bug já corrigido (ver
+    CONTINUIDADE.md): tentando baixar um anexo, versões anteriores do app
+    clicavam sem querer em "Manter esta mensagem na parte superior de sua
+    pasta" — fixando o e-mail. Aqui não há registro confiável de quais
+    e-mails isso atingiu (o banco só grava `is_pinned` na primeira vez que
+    vê a conversa, não quando ela muda depois), então a checagem é ao vivo:
+    o estado "Fixado" vem do próprio Outlook a cada e-mail da varredura.
+
+    Só desafixa o que reconhece com segurança pelo rótulo do controle
+    (`browser_client.unpin_message`); o resto entra em `not_identified` para
+    o usuário resolver à mão.
+    """
+    result = UnpinResult(folder=folder)
+    _log.info(
+        "busca de fixados iniciada — pasta=%s limite=%s",
+        folder or DEFAULT_FOLDER_NAME, max_messages,
+    )
+
+    with browser_client.open_inbox_session(headless=headless) as page:
+        if folder is not None:
+            browser_client.open_folder(page, folder)
+
+        for message in browser_client.scan_inbox(
+            page,
+            max_messages=max_messages,
+            on_progress=on_progress,
+            should_stop=should_stop,
+        ):
+            if should_stop is not None and should_stop():
+                result.stopped = True
+                break
+            result.scanned += 1
+
+            if not message.get("is_pinned"):
+                continue
+            result.pinned_found += 1
+
+            if browser_client.unpin_message(page, message["conv_id"]):
+                result.unpinned += 1
+            else:
+                result.not_identified.append(message.get("subject") or "(sem assunto)")
+
+    _log.info(
+        "busca de fixados concluída — %d e-mails, %d fixados, %d desafixados%s",
+        result.scanned, result.pinned_found, result.unpinned,
+        " (interrompida)" if result.stopped else "",
+    )
+    return result
 
 
 def run_and_report(
