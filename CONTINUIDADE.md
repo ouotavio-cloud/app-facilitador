@@ -28,7 +28,7 @@ perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
 |---|---|
 | 1.1 Identificar proposta pelo código `SUP.AAAA-NNN` | Pronto |
 | 1.2 Arquivar em Obra/Processo/Fornecedor | Pronto (v6) |
-| 1.3 Baixar o anexo, varrendo a caixa inteira | Pronto (v6), com a ressalva abaixo |
+| 1.3 Baixar o anexo, varrendo a caixa inteira | Calibrado (v8) para "Salvar como"; confirmar na máquina do usuário |
 | 1.4 Avisar ao terminar a varredura | Pronto (resumo na tela) |
 | Botão de parar a varredura | Pronto (v7) |
 | Interruptor "baixar anexos" (liga/desliga o download) | Pronto (v7) |
@@ -108,6 +108,16 @@ e-mails que casam com processo cadastrado são abertos.
 **O download tem de acontecer durante a varredura.** A lista do Outlook é
 virtualizada: numa segunda passada a linha não está mais no DOM e não há
 onde clicar.
+
+**O download é setinha (˅) → "Salvar como", não um botão "Baixar".** No
+Outlook do usuário o cartão do anexo não tem botão de baixar visível: tem
+um menu suspenso (Visualização, Abrir, Salvar no OneDrive, Copiar, Salvar
+como). O item que baixa para a máquina é "Salvar como" — "Salvar no
+OneDrive" salva na nuvem e nem gera download local. Os seletores foram
+calibrados contra print real que o usuário mandou; se parar de funcionar,
+`scanner._salvar_diagnostico` já salva o HTML do painel em
+`diagnostico-anexo.html` na pasta de dados na primeira falha, e o caminho
+aparece no resumo da varredura.
 
 **Não saia de um `expect_download` por `continue`.** Sair do bloco `with
 page.expect_download()` pela porta normal faz o Playwright *esperar* o

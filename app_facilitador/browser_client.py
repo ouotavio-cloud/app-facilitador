@@ -531,13 +531,20 @@ extensoes => {
         const extensao = arquivo.slice(arquivo.lastIndexOf('.')).toLowerCase();
         if (!extensoes.includes(extensao)) continue;
 
-        // Um mesmo anexo aparece em elementos aninhados (o cartão e o
-        // botão dentro dele); ficamos com o mais interno, que é onde o
-        // clique costuma funcionar.
         if (vistos.has(arquivo)) continue;
         vistos.add(arquivo);
 
-        el.setAttribute('data-facilitador-anexo', arquivo);
+        // O rótulo com o nome costuma ser um span sem interação. O que o
+        // download precisa é do CARTÃO do anexo, que contém a setinha (˅)
+        // que abre o menu "Salvar como". Subimos do rótulo até o primeiro
+        // ancestral que tenha um acionador de menu (ou ao menos um botão),
+        // e é esse que marcamos — assim o download encontra a setinha.
+        let cartao = el;
+        for (let i = 0; i < 8 && cartao.parentElement; i++) {
+            if (cartao.querySelector('[aria-haspopup], button')) break;
+            cartao = cartao.parentElement;
+        }
+        cartao.setAttribute('data-facilitador-anexo', arquivo);
         achados.push(arquivo);
     }
 
@@ -616,7 +623,10 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
     except Exception:  # noqa: BLE001 - o anexo pode não aceitar hover
         pass
 
-    for tentativa in (_baixar_pelo_botao, _baixar_pelo_menu):
+    # A ordem importa: no Outlook do usuário o caminho real é a setinha (˅)
+    # que abre "Salvar como". O botão de hover fica como reserva, para
+    # layouts em que ele exista.
+    for tentativa in (_baixar_pelo_menu, _baixar_pelo_botao):
         try:
             with page.expect_download(timeout=_DOWNLOAD_START_TIMEOUT_MS) as download:
                 if not tentativa(page, alvo):
@@ -631,33 +641,54 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
     return False
 
 
-def _baixar_pelo_botao(page: Page, alvo) -> bool:
-    """Botão de download que aparece sobre o anexo ao passar o mouse."""
-    botao = page.locator(
-        '[aria-label*="Baixar" i], [aria-label*="Download" i], '
-        '[title*="Baixar" i], [title*="Download" i]'
-    ).first
-    if botao.count() == 0:
-        return False
-    botao.click(timeout=5_000)
-    return True
+# Rótulos do item de menu que salva o anexo em disco. "Salvar como" é o que
+# aparece no Outlook do usuário; os demais cobrem outros idiomas/versões.
+# "Salvar no OneDrive" fica de fora de propósito: salva na nuvem, não na
+# máquina, e é outro fluxo (nem gera download local para o Playwright pegar).
+_ROTULO_SALVAR = re.compile(r"salvar como|baixar|download|save as", re.I)
 
 
 def _baixar_pelo_menu(page: Page, alvo) -> bool:
-    """Item "Baixar" dentro do menu de mais ações do anexo."""
-    menu = page.locator(
-        '[aria-label*="mais ações" i], [aria-label*="more actions" i], '
-        '[aria-label*="Mais opções" i]'
-    ).first
-    if menu.count() == 0:
-        return False
-    menu.click(timeout=5_000)
+    """Abre a setinha (˅) do anexo e clica em "Salvar como".
 
-    item = page.get_by_role("menuitem").filter(has_text=re.compile("baixar|download", re.I)).first
-    if item.count() == 0:
+    É o caminho real no Outlook do usuário: o cartão do anexo não tem botão
+    de baixar visível, só um menu suspenso com Visualização, Abrir, Salvar
+    no OneDrive, Copiar e Salvar como.
+    """
+    # A setinha é um acionador de menu. Preferimos `aria-haspopup` (o que
+    # ela é), caindo para qualquer botão do cartão se não houver.
+    gatilho = alvo.locator('[aria-haspopup]').first
+    if gatilho.count() == 0:
+        gatilho = alvo.locator("button").last
+    if gatilho.count() == 0:
         return False
-    item.click(timeout=5_000)
+    gatilho.click(timeout=5_000)
+
+    item = page.get_by_role("menuitem").filter(has_text=_ROTULO_SALVAR).first
+    try:
+        # `click` espera o item aparecer sozinho — o menu monta com um
+        # pequeno atraso depois do clique na setinha.
+        item.click(timeout=5_000)
+    except Exception:  # noqa: BLE001 - o menu não trouxe um item de salvar
+        return False
     return True
+
+
+def _baixar_pelo_botao(page: Page, alvo) -> bool:
+    """Botão de download que aparece sobre o anexo ao passar o mouse.
+
+    Reserva: alguns layouts do Outlook mostram um botão direto. Procura
+    primeiro dentro do cartão do anexo, depois na página inteira.
+    """
+    for escopo in (alvo, page):
+        botao = escopo.locator(
+            '[aria-label*="Baixar" i], [aria-label*="Download" i], '
+            '[title*="Baixar" i], [title*="Download" i]'
+        ).first
+        if botao.count() > 0:
+            botao.click(timeout=5_000)
+            return True
+    return False
 
 
 def dump_message_debug(page: Page, destino) -> None:

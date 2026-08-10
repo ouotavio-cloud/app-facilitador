@@ -1,29 +1,48 @@
-"""Garante que baixar um anexo nunca pendura o app.
+"""Garante que baixar um anexo funciona pelo menu "Salvar como" e nunca
+pendura o app.
 
-Este é o bug que travava a varredura ao chegar numa proposta: quando os
-seletores do botão de baixar não batem com o Outlook real, o código antigo
-saía do `expect_download` por `continue` — e sair assim fazia o Playwright
-esperar o download inteiro (o timeout todo) por um clique que nunca
-aconteceu, duas vezes, minutos parado por anexo.
+Dois comportamentos são travados aqui:
 
-O navegador falso aqui não fala com o Outlook. Ele registra uma coisa só:
-se o app chegou a *esperar* um download. Quando não há acionador para
-clicar, esperar seria o bug — o teste falha se isso voltar a acontecer.
+- **O caminho real do Outlook do usuário**: o cartão do anexo não tem botão
+  de baixar; tem uma setinha (˅) que abre um menu com "Salvar como". O
+  download precisa clicar na setinha e depois no item de salvar.
+
+- **Anti-congelamento**: quando não há acionador nenhum na tela, o app não
+  pode ficar esperando um download que nunca vem. Era o bug que travava a
+  varredura ao chegar numa proposta — o teste falha se ele voltar.
+
+O navegador falso não fala com o Outlook. Ele registra se o app chegou a
+*esperar* um download; esperar sem um clique ter disparado nada é o bug.
 """
+
+import re
 
 from app_facilitador import browser_client
 
 
 class _LocatorFalso:
-    def __init__(self, quantos: int):
+    def __init__(self, page, quantos: int):
+        self._page = page
         self._quantos = quantos
 
     @property
     def first(self):
         return self
 
+    @property
+    def last(self):
+        return self
+
     def count(self) -> int:
         return self._quantos
+
+    def locator(self, selector: str):
+        # Sub-busca dentro do cartão do anexo (ex.: a setinha do menu).
+        return self._page.locator(selector)
+
+    def filter(self, has_text=None):
+        # Filtro do item de menu por texto — devolve o próprio item.
+        return self
 
     def scroll_into_view_if_needed(self, timeout=None):
         pass
@@ -32,14 +51,18 @@ class _LocatorFalso:
         pass
 
     def click(self, timeout=None):
-        pass
+        # Como no Playwright: clicar num elemento que não existe levanta —
+        # é assim que _baixar_pelo_menu sabe que faltou o item "Salvar como".
+        if self._quantos == 0:
+            raise RuntimeError("elemento inexistente")
+        self._page.cliques.append("click")
 
 
 class _DownloadFalso:
     """Finge o `expect_download`. O que importa é o __exit__.
 
     No Playwright real, sair do `with` sem exceção faz o gerenciador
-    *esperar* o download. Marcamos isso: se aconteceu sem um clique ter
+    *esperar* o download. Marcamos isso: se aconteceu sem um acionador ter
     disparado nada, é o congelamento voltando.
     """
 
@@ -63,33 +86,36 @@ class _DownloadFalso:
 
 
 class _PageFalsa:
-    def __init__(self, tem_acionador: bool):
-        self._tem_acionador = tem_acionador
+    """Modela o cartão do anexo com setinha e o menu "Salvar como"."""
+
+    def __init__(self, tem_anexo=True, tem_setinha=True, tem_item_salvar=True):
+        self._tem_anexo = tem_anexo
+        self._tem_setinha = tem_setinha
+        self._tem_item_salvar = tem_item_salvar
         self.esperou_download = False
         self.salvou = None
+        self.cliques = []
 
     def locator(self, selector: str):
         if "data-facilitador-anexo" in selector:
-            return _LocatorFalso(1)  # o anexo em si existe
-        # seletores de botão/menu de download
-        return _LocatorFalso(1 if self._tem_acionador else 0)
+            return _LocatorFalso(self, 1 if self._tem_anexo else 0)
+        if "aria-haspopup" in selector:
+            return _LocatorFalso(self, 1 if self._tem_setinha else 0)
+        if "button" in selector:
+            return _LocatorFalso(self, 1 if self._tem_setinha else 0)
+        # seletores do botão de hover (reserva): não existem neste Outlook
+        return _LocatorFalso(self, 0)
+
+    def get_by_role(self, role: str):
+        return _LocatorFalso(self, 1 if self._tem_item_salvar else 0)
 
     def expect_download(self, timeout=None):
         return _DownloadFalso(self)
 
 
-def test_nao_espera_download_quando_nao_ha_botao(tmp_path):
-    """Sem acionador na tela: falha na hora, não pendura esperando."""
-    page = _PageFalsa(tem_acionador=False)
-
-    baixou = browser_client.download_attachment(page, "Proposta.pdf", tmp_path / "x.pdf")
-
-    assert baixou is False
-    assert page.esperou_download is False  # o ponto: nunca ficou esperando
-
-
-def test_baixa_quando_o_acionador_existe(tmp_path):
-    page = _PageFalsa(tem_acionador=True)
+def test_baixa_pelo_menu_salvar_como(tmp_path):
+    """Clica na setinha e depois em 'Salvar como' — o caminho real."""
+    page = _PageFalsa()
     destino = tmp_path / "x.pdf"
 
     baixou = browser_client.download_attachment(page, "Proposta.pdf", destino)
@@ -98,14 +124,37 @@ def test_baixa_quando_o_acionador_existe(tmp_path):
     assert page.salvou == str(destino)
 
 
+def test_nao_espera_download_sem_acionador(tmp_path):
+    """Sem setinha nem botão: falha na hora, não pendura esperando."""
+    page = _PageFalsa(tem_setinha=False, tem_item_salvar=False)
+
+    baixou = browser_client.download_attachment(page, "Proposta.pdf", tmp_path / "x.pdf")
+
+    assert baixou is False
+    assert page.esperou_download is False  # o ponto: nunca ficou esperando
+
+
+def test_setinha_sem_item_de_salvar_nao_trava(tmp_path):
+    """Menu abre mas não tem 'Salvar como' (ex.: só OneDrive): não pendura."""
+    page = _PageFalsa(tem_setinha=True, tem_item_salvar=False)
+
+    baixou = browser_client.download_attachment(page, "Proposta.pdf", tmp_path / "x.pdf")
+
+    assert baixou is False
+
+
 def test_devolve_falso_quando_o_anexo_nem_existe(tmp_path):
-    class _SemAnexo(_PageFalsa):
-        def locator(self, selector):
-            return _LocatorFalso(0)
+    page = _PageFalsa(tem_anexo=False)
 
     assert (
-        browser_client.download_attachment(
-            _SemAnexo(tem_acionador=True), "x.pdf", tmp_path / "x.pdf"
-        )
-        is False
+        browser_client.download_attachment(page, "x.pdf", tmp_path / "x.pdf") is False
     )
+
+
+def test_rotulo_salvar_reconhece_salvar_como():
+    """A regressão que causou tudo: o item era 'Salvar como', não 'Baixar'."""
+    assert browser_client._ROTULO_SALVAR.search("Salvar como")
+    assert browser_client._ROTULO_SALVAR.search("Save as")
+    assert browser_client._ROTULO_SALVAR.search("Baixar")
+    # "Salvar no OneDrive" não é download local — não deve casar.
+    assert not browser_client._ROTULO_SALVAR.search("Salvar no OneDrive – engeform")

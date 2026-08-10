@@ -37,6 +37,9 @@ class ScanResult:
     downloaded: int = 0
     download_failures: int = 0
     stopped: bool = False
+    # Caminho de um HTML do painel de leitura salvo quando um download
+    # falha — é o que permite calibrar os seletores sem outra compilação.
+    debug_dump: str | None = None
 
     def summary_lines(self) -> list[str]:
         lines = []
@@ -52,6 +55,11 @@ class ScanResult:
         ]
         if self.download_failures:
             lines.append(f"Anexos que não deu para baixar: {self.download_failures}")
+            if self.debug_dump:
+                lines.append(
+                    "Para eu consertar o download, me envie este arquivo: "
+                    f"{self.debug_dump}"
+                )
         if self.codes_found:
             lines.append("Processos encontrados:")
             for code, count in sorted(self.codes_found.items()):
@@ -264,6 +272,25 @@ def _download_proposal(
             result.downloaded += 1
         else:
             result.download_failures += 1
+            _salvar_diagnostico(page, result)
+
+
+def _salvar_diagnostico(page, result: ScanResult) -> None:
+    """Salva o HTML do painel de leitura na primeira falha de download.
+
+    Uma vez só por varredura: basta um exemplo para recalibrar os
+    seletores, e reescrever o arquivo a cada falha só gastaria disco. O
+    caminho vai para o resumo, para o usuário saber o que me enviar se o
+    download continuar falhando.
+    """
+    if result.debug_dump is not None:
+        return
+    try:
+        destino = config.BASE_DIR / "diagnostico-anexo.html"
+        browser_client.dump_message_debug(page, destino)
+        result.debug_dump = str(destino)
+    except Exception:  # noqa: BLE001 - diagnóstico é melhor-esforço, não pode derrubar a varredura
+        pass
 
 
 def run_and_report(

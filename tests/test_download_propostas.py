@@ -71,6 +71,13 @@ def outlook(tmp_path, monkeypatch):
         "download_attachment",
         lambda page, nome, destino: page.baixar(nome, destino),
     )
+    # O diagnóstico salva o HTML do painel numa falha; aqui só registramos
+    # que foi chamado, sem tocar em navegador.
+    monkeypatch.setattr(
+        browser_client,
+        "dump_message_debug",
+        lambda page, destino: destino.write_text("<html>painel</html>", encoding="utf-8"),
+    )
 
     return estado
 
@@ -190,6 +197,20 @@ def test_falha_no_download_fica_registrada(outlook):
         anexos = storage.list_attachments(conexao)
     assert anexos[0]["error"]
     assert anexos[0]["path"] is None
+
+
+def test_falha_no_download_salva_html_para_diagnostico(outlook):
+    """Sem o HTML real do painel, calibrar o download é adivinhação."""
+    _cadastrar("SUP.2026-197")
+    outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-197")]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]}, falhar_download=True)
+
+    resultado = scanner.scan()
+
+    assert resultado.debug_dump is not None
+    from pathlib import Path
+
+    assert Path(resultado.debug_dump).exists()
 
 
 def test_falha_permite_nova_tentativa_na_proxima_varredura(outlook):
