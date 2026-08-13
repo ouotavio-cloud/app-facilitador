@@ -240,7 +240,7 @@ def scan(
                         # dica que falha assim não pode ter poder de veto sobre
                         # o sinal forte, que é o código do processo no assunto.
                         # Quem decide se há anexo é o painel de leitura aberto:
-                        # sem anexo-proposta, `_baixar_anexos_abertos` devolve
+                        # sem anexo-proposta, `_download_open_attachments` devolve
                         # vazio e segue a vida.
                         _download_proposal(
                             page, connection, message, matches, processes,
@@ -352,17 +352,17 @@ def _download_proposal(
     codigo = matches[0]["code"]
     obra = next((p["obra"] for p in processes if p["code"] == codigo), None)
 
-    baixados = _baixar_anexos_abertos(
+    baixados = _download_open_attachments(
         page, connection, message, codigo, obra, base_dir, result, keep_technical,
         known_suppliers,
     )
     # Depois de baixar, lê o corpo e o texto dos PDFs para achar códigos que
     # não estavam no assunto — reforça a confiança e pega processos citados
     # só no conteúdo.
-    _enriquecer_pelo_conteudo(page, connection, message, processes, baixados, result)
+    _enrich_from_content(page, connection, message, processes, baixados, result)
 
 
-def _baixar_anexos_abertos(
+def _download_open_attachments(
     page,
     connection,
     message: dict,
@@ -429,12 +429,12 @@ def _baixar_anexos_abertos(
             gravados.append(destino)
         else:
             result.download_failures += 1
-            _salvar_diagnostico(page, result)
+            _save_diagnostics(page, result)
 
     return gravados
 
 
-def _enriquecer_pelo_conteudo(
+def _enrich_from_content(
     page,
     connection,
     message: dict,
@@ -520,13 +520,13 @@ def _deep_scan_message(
 
     # Casou pelo corpo: agora sim baixa os anexos-proposta de verdade,
     # com o mesmo filtro e preferência pela comercial do download normal.
-    _baixar_anexos_abertos(
+    _download_open_attachments(
         page, connection, message, codigo, obra, base_dir, result, keep_technical,
         known_suppliers,
     )
 
 
-def _salvar_diagnostico(page, result: ScanResult) -> None:
+def _save_diagnostics(page, result: ScanResult) -> None:
     """Salva o HTML do painel de leitura na primeira falha de download.
 
     Uma vez só por varredura: basta um exemplo para recalibrar os

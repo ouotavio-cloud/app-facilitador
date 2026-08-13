@@ -22,7 +22,8 @@ extrai a pasta, dá dois cliques no `.exe`. Nada a instalar antes.
 ## Estado atual
 
 Funciona, confirmado pelo usuário na máquina dele ("ele funciona
-perfeito"). 173 testes passando, nenhum precisa de navegador ou login.
+perfeito"). 336 testes passando; só `test_find_attachments_dom.py` usa
+navegador, e ele se pula quando não há um instalado.
 
 | Item do pedido | Situação |
 |---|---|
@@ -393,6 +394,66 @@ Outlook (`.ESO13`, `.IjzWp`) são geradas pelo build da Microsoft e mudam
 sem aviso. Onde deu, usei o conteúdo — anexos são achados por "termina em
 .pdf", pastas por nome limpo. Prefira sempre esse caminho.
 
+## v17: limpeza — o download caiu ~320 MB e o código morto saiu
+
+Pedido do usuário: o app estava "quase 1 GB", com "várias partes remendadas
+que não se comunicam bem". As duas coisas eram verdade, e nenhuma delas
+estava no código que ele lia — estavam no que era **empacotado**.
+
+**O download.** `playwright install chromium` não baixa um navegador, baixa
+três coisas: o Chromium (~600 MB), o **chrome-headless-shell** (~320 MB) e o
+ffmpeg (~5 MB). O `AppFacilitador.spec` copiava `pw-browsers/` inteira, então
+os três entravam no zip. O app abre a janela de cara — o usuário precisa
+vê-la para logar — e **nunca executa** o headless shell nem o ffmpeg.
+
+Três mudanças travam isso:
+
+- `open_browser_context` pede `channel="chromium"`. A partir do Playwright
+  1.49, `headless=True` procura o headless shell por padrão; com o canal
+  explícito, os dois modos usam o mesmo binário. Sem isto, cortar o shell
+  quebraria o `--verificar-navegador` da compilação;
+- a CI instala com `playwright install --no-shell chromium`;
+- o `.spec` copia **só** as pastas `chromium-*`, uma a uma. É a segunda
+  trava: uma `pw-browsers` antiga não volta a inchar o pacote em silêncio.
+
+Um passo novo na CI imprime o tamanho da pasta e quais navegadores foram
+embarcados — uma regressão dessas passa a aparecer na compilação, e não na
+máquina do usuário.
+
+**As partes que não se comunicavam.** Havia um subsistema inteiro de
+Microsoft Graph (`auth.py`, `graph_client.py`, `scripts/smoke_test_auth.py`,
+dois arquivos de teste, cinco constantes em `config.py`, e as dependências
+`msal` e `requests`) — o caminho que a seção 2 do PLANEJAMENTO registra como
+**bloqueado pela TI** e que nada no app chamava. Saiu inteiro: era código
+que ninguém executava e que ainda assim ia dentro do `.exe`. Saiu também
+`scripts/test_imap.py` (testava o Basic Auth, também descartado, e o nome
+`test_` fazia parecer um teste que na verdade nunca rodava) e
+`storage.downloaded_conversations`, substituída por
+`downloaded_conversations_on_disk` e esquecida.
+
+**`browser_client.py` tinha 1.300 linhas** e quatro assuntos que mudam por
+motivos diferentes. Virou pacote, um arquivo por assunto (ver o mapa
+abaixo). A superfície pública não mudou: `from app_facilitador import
+browser_client` continua valendo. **Uma ressalva para quem for escrever
+teste:** `monkeypatch.setattr` tem de mirar no submódulo que DEFINE a função
+(`browser_client.session.open_browser_context`), não no atalho reexportado
+pelo `__init__` — quem chama por dentro do pacote enxerga o submódulo.
+
+**Outras arestas:** `ScanJob` e `UnpinJob` eram cópias quase idênticas (~100
+linhas repetidas) e viraram uma base `_StoppableJob` com um método que diz o
+que rodar; `browser_client` importava `attachments` dentro de uma função
+para evitar um ciclo que não existe (`attachments` não importa ninguém do
+app), e o import subiu para o topo; o `diagnostico-anexo.html` estava
+**versionado** — é um despejo com e-mail real dentro, agora no `.gitignore`;
+e os identificadores, que eram metade em português e metade em inglês dentro
+do mesmo arquivo, seguem uma regra só: **código em inglês, prosa em
+português**.
+
+**A CI só rodava no branch padrão.** Um branch era compilado depois de já ter
+entrado — a quebra aparecia quando já não havia o que revisar. Agora há
+gatilho de `pull_request` que compila e verifica sem publicar release (a
+publicação ficou condicionada a `github.event_name == 'push'`).
+
 ## Mapa do código
 
 ```
@@ -400,7 +461,11 @@ app.py                      entrada; --verificar e --verificar-navegador (usados
 app_facilitador/
   paths.py                  dados vs. recursos; onde o .exe grava
   config.py                 caminhos, URLs, regex do código do processo
-  browser_client.py         Playwright: login, varredura com scroll, pastas, anexos
+  browser_client/           Playwright, um arquivo por assunto:
+    session.py                abre o Chromium, login, página pronta
+    inbox.py                  pastas, rolagem, abrir e ler uma mensagem
+    downloads.py              anexos do e-mail aberto: achar e baixar
+    diagnostics.py            despejos da página, para recalibrar seletores
   inbox_parser.py           parsing puro da lista de e-mails
   proposal_detector.py      casa o texto com os processos cadastrados
   attachments.py            decide pasta e nome de cada proposta (puro)
@@ -409,7 +474,7 @@ app_facilitador/
   storage.py                SQLite: mensagens, códigos, processos, anexos, settings
   scanner.py                junta tudo; é aqui que a varredura acontece
   web/server.py             Flask; rotas do painel
-  web/jobs.py               ScanJob, LoginJob, MeetingsJob (threads)
+  web/jobs.py               ScanJob, UnpinJob, LoginJob, MeetingsJob (threads)
   web/templates|static      a interface
 AppFacilitador.spec         empacotamento (onedir + Chromium embutido)
 .github/workflows/          compila no Windows e publica a release

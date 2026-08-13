@@ -7,9 +7,21 @@
 
 name: Compilar app para Windows
 
+# Roda nos dois casos, com desfechos diferentes:
+#
+#   push no branch padrão  -> compila, verifica E publica a release
+#   pull request           -> compila e verifica, sem publicar nada
+#
+# O gatilho de pull request existe porque, sem ele, um branch só era
+# compilado depois de já ter entrado no padrão — a quebra aparecia quando
+# já não havia o que revisar. É a mesma verificação, adiantada para antes
+# do merge.
 on:
   push:
     branches: [claude/task-proposal-management-app-vt4xvm]
+    paths-ignore:
+      - "**.md"
+  pull_request:
     paths-ignore:
       - "**.md"
   workflow_dispatch:
@@ -49,7 +61,14 @@ jobs:
         # O app usa este Chromium, e não o Edge do Windows: o Edge não
         # preservava a conta do Outlook entre execuções na máquina do
         # usuário, obrigando a logar de novo o tempo todo.
-        run: playwright install chromium
+        #
+        # `--no-shell` corta 323 MB do download do usuário. Sem ele, o
+        # Playwright baixa TAMBÉM o "chrome-headless-shell", um segundo
+        # navegador que só é usado em modo headless — e o app abre a janela
+        # de cara (o usuário precisa vê-la para logar). Para que a
+        # verificação headless logo abaixo continue funcionando sem esse
+        # binário, `open_browser_context` pede `channel="chromium"`.
+        run: playwright install --no-shell chromium
 
       - name: Compilar
         run: pyinstaller --clean --noconfirm AppFacilitador.spec
@@ -69,6 +88,18 @@ jobs:
           .\dist\AppFacilitador\AppFacilitador.exe --verificar-navegador
           if ($LASTEXITCODE -ne 0) { throw "O executável não conseguiu abrir o navegador" }
 
+      - name: Medir o tamanho do que foi gerado
+        # O tamanho do download é um requisito, não um detalhe: já esteve
+        # perto de 1 GB por embarcar navegadores que o app nunca executa
+        # (ver AppFacilitador.spec). Imprimir a conta a cada compilação faz
+        # uma regressão dessas aparecer aqui, e não na máquina do usuário.
+        run: |
+          $mb = [math]::Round((Get-ChildItem -Recurse dist\AppFacilitador |
+                Measure-Object -Property Length -Sum).Sum / 1MB, 1)
+          Write-Host "Pasta do app: $mb MB"
+          Get-ChildItem dist\AppFacilitador\_internal\playwright-browsers -EA SilentlyContinue |
+            ForEach-Object { Write-Host "  navegador embarcado: $($_.Name)" }
+
       - name: Compactar para download
         run: Compress-Archive -Path dist\AppFacilitador -DestinationPath AppFacilitador-windows.zip
 
@@ -80,6 +111,11 @@ jobs:
           if-no-files-found: error
 
       - name: Publicar release para download
+        # Só no branch padrão. Num pull request tudo acima já rodou — a
+        # compilação e as duas verificações —, e é isso que se quer saber
+        # antes do merge; publicar uma release por PR encheria a página de
+        # downloads de versões que ninguém deveria baixar.
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         # O texto abaixo usa here-string de aspas simples (@'...'@): assim o
@@ -94,7 +130,7 @@ jobs:
           Não precisa instalar Python, nem navegador, nem nada: o Chromium que o
           app usa vem junto. Por isso o zip é grande — e por isso ele é um zip e
           não um `.exe` solto: num arquivo único o Windows precisaria descompactar
-          150 MB a cada abertura.
+          o navegador inteiro a cada abertura.
 
           **Na primeira vez**, o Windows pode mostrar um aviso azul de SmartScreen,
           porque o programa não tem assinatura digital paga. Clique em

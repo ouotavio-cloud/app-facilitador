@@ -1,30 +1,24 @@
-"""Configuração de autenticação com a Microsoft Graph API.
+"""Caminhos, endereços e padrões que o resto do app consulta.
 
-Não usamos um App Registration próprio: o tenant do usuário bloqueia
-usuários comuns de criar registros no Azure AD (ver PLANEJAMENTO.md,
-seção 2). Em vez disso, usamos o client_id público do "Microsoft Graph
-Command Line Tools", um app oficial da Microsoft presente em qualquer
-tenant, que só exige consentimento comum do próprio usuário.
+Um só lugar para o que muda de máquina para máquina (onde os arquivos
+ficam) e para o que muda quando a Microsoft mexe no Outlook Web (as URLs).
+
+Não há nada de Microsoft Graph aqui: a API está bloqueada pela política de
+TI da organização, e o app lê a tela do Outlook Web (ver PLANEJAMENTO.md,
+seção 2, e `browser_client/`).
 """
 
 from pathlib import Path
 
 from app_facilitador import paths
 
-CLIENT_ID = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
-AUTHORITY = "https://login.microsoftonline.com/common"
-SCOPES = ["Mail.Read", "Calendars.Read"]
-
 # Tudo que o app grava vai para a pasta de dados do usuário — que, no
 # executável, é diferente da pasta do programa (ver app_facilitador/paths.py).
 BASE_DIR = paths.data_dir()
-TOKEN_CACHE_PATH = BASE_DIR / ".token_cache.bin"
 
 # Banco de estado local: mensagens já processadas e códigos de processo
 # encontrados. Arquivo único, sem servidor (ver PLANEJAMENTO.md, seção 4).
 DB_PATH = BASE_DIR / "app_facilitador.db"
-
-GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 
 # Onde as propostas baixadas são arquivadas, na árvore
 # `Obra / Processo / Fornecedor / arquivo`.

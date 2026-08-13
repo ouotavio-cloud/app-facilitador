@@ -505,18 +505,6 @@ def reset_scan_history(connection: sqlite3.Connection) -> None:
     connection.execute("DELETE FROM messages")
 
 
-def downloaded_conversations(connection: sqlite3.Connection) -> set[str]:
-    """Conversas cujos anexos já foram baixados com sucesso.
-
-    Serve para a varredura não abrir de novo um e-mail já processado —
-    abrir custa segundos e marca a mensagem como lida no Outlook.
-    """
-    rows = connection.execute(
-        "SELECT DISTINCT conv_id FROM attachments WHERE error IS NULL"
-    ).fetchall()
-    return {row["conv_id"] for row in rows}
-
-
 def downloaded_conversations_on_disk(connection: sqlite3.Connection) -> set[str]:
     """Conversas já baixadas **e cujos arquivos ainda estão na pasta**.
 

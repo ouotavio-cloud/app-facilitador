@@ -126,7 +126,7 @@ def _montar_outlook(linhas: list[str], anexos_abertos: list[str]) -> str:
 
 def _achar(pagina) -> list[str]:
     return pagina.evaluate(
-        browser_client._JS_FIND_ATTACHMENTS, sorted(attachments.DOCUMENT_EXTENSIONS)
+        browser_client.downloads._JS_FIND_ATTACHMENTS, sorted(attachments.DOCUMENT_EXTENSIONS)
     )
 
 
@@ -281,34 +281,34 @@ class TestAbrirEmail:
 
     def test_abre_quando_a_linha_fica_selecionada_e_o_painel_troca(self, pagina):
         pagina.set_content(self._tela("conv-1", ["Antiga.pdf"]))
-        antes = browser_client._impressao_do_painel(pagina)
+        antes = browser_client.inbox._reading_pane_fingerprint(pagina)
 
         # O Outlook seleciona conv-2 e troca os anexos do painel.
         pagina.set_content(self._tela("conv-2", ["Proposta Nova.pdf"]))
 
-        assert browser_client._painel_trocou(pagina, "conv-2", antes) is True
+        assert browser_client.inbox._reading_pane_switched(pagina, "conv-2", antes) is True
 
     def test_recusa_quando_o_painel_nao_trocou(self, pagina, monkeypatch):
         """O clique selecionou a linha, mas o painel continua no e-mail antigo."""
-        monkeypatch.setattr(browser_client, "_PAINEL_TROCA_TIMEOUT_MS", 600)
+        monkeypatch.setattr(browser_client.inbox, "_PANE_SWITCH_TIMEOUT_MS", 600)
         pagina.set_content(self._tela("conv-2", ["Antiga.pdf"]))
-        antes = browser_client._impressao_do_painel(pagina)
+        antes = browser_client.inbox._reading_pane_fingerprint(pagina)
 
-        assert browser_client._painel_trocou(pagina, "conv-2", antes) is False
+        assert browser_client.inbox._reading_pane_switched(pagina, "conv-2", antes) is False
 
     def test_recusa_quando_a_linha_nem_foi_selecionada(self, pagina, monkeypatch):
         """O clique não pegou: conv-1 segue selecionada, e pedimos conv-2."""
-        monkeypatch.setattr(browser_client, "_PAINEL_TROCA_TIMEOUT_MS", 600)
+        monkeypatch.setattr(browser_client.inbox, "_PANE_SWITCH_TIMEOUT_MS", 600)
         pagina.set_content(self._tela("conv-1", ["Antiga.pdf"]))
         antes = "impressão de outro momento"
 
-        assert browser_client._painel_trocou(pagina, "conv-2", antes) is False
+        assert browser_client.inbox._reading_pane_switched(pagina, "conv-2", antes) is False
 
     def test_a_impressao_inclui_os_nomes_dos_anexos(self, pagina):
         """É o que a varredura vai ler em seguida — é o que precisa ter mudado."""
         pagina.set_content(self._tela("conv-1", ["Proposta Comercial.pdf"]))
 
-        assert "Proposta Comercial.pdf" in browser_client._impressao_do_painel(pagina)
+        assert "Proposta Comercial.pdf" in browser_client.inbox._reading_pane_fingerprint(pagina)
 
 
 def test_email_sem_anexo_nao_devolve_nada(pagina):

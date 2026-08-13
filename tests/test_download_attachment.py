@@ -52,7 +52,7 @@ class _LocatorFalso:
 
     def click(self, timeout=None):
         # Como no Playwright: clicar num elemento que não existe levanta —
-        # é assim que _baixar_pelo_menu sabe que faltou o item "Salvar como".
+        # é assim que _download_via_menu sabe que faltou o item "Salvar como".
         if self._quantos == 0:
             raise RuntimeError("elemento inexistente")
         self._page.cliques.append("click")
@@ -309,34 +309,34 @@ class TestArquivoPedido:
 
     def test_extensao_diferente_nunca_passa(self):
         """É o caso do "Baixar tudo": zip no lugar do pdf."""
-        assert not browser_client._e_o_arquivo_pedido("Anexos.zip", "Proposta.pdf")
+        assert not browser_client.downloads._is_requested_file("Anexos.zip", "Proposta.pdf")
 
     def test_outro_anexo_do_mesmo_tipo_nao_passa(self):
-        assert not browser_client._e_o_arquivo_pedido(
+        assert not browser_client.downloads._is_requested_file(
             "260722 - PT - BERMAD - R00.pdf", "PC 05358 - NIT 3320.pdf"
         )
 
     def test_mesmo_arquivo_passa(self):
-        assert browser_client._e_o_arquivo_pedido("Proposta.pdf", "Proposta.pdf")
+        assert browser_client.downloads._is_requested_file("Proposta.pdf", "Proposta.pdf")
 
     def test_nome_vazio_nao_passa(self):
-        assert not browser_client._e_o_arquivo_pedido("", "Proposta.pdf")
+        assert not browser_client.downloads._is_requested_file("", "Proposta.pdf")
 
 
 def test_rotulo_nao_salvar_afasta_o_baixar_tudo():
     """"Baixar tudo" casa com o padrão de salvar e empacota todos os anexos."""
-    assert browser_client._ROTULO_SALVAR.search("Baixar tudo")  # por isso o filtro
-    assert browser_client._ROTULO_NAO_SALVAR.search("Baixar tudo")
-    assert browser_client._ROTULO_NAO_SALVAR.search("Salvar tudo no OneDrive – engeform")
+    assert browser_client.downloads._SAVE_LABEL.search("Baixar tudo")  # por isso o filtro
+    assert browser_client.downloads._NOT_SAVE_LABEL.search("Baixar tudo")
+    assert browser_client.downloads._NOT_SAVE_LABEL.search("Salvar tudo no OneDrive – engeform")
     # E não pode afastar o item certo.
-    assert not browser_client._ROTULO_NAO_SALVAR.search("Salvar como")
-    assert not browser_client._ROTULO_NAO_SALVAR.search("Baixar")
+    assert not browser_client.downloads._NOT_SAVE_LABEL.search("Salvar como")
+    assert not browser_client.downloads._NOT_SAVE_LABEL.search("Baixar")
 
 
 def test_rotulo_salvar_reconhece_salvar_como():
     """A regressão que causou tudo: o item era 'Salvar como', não 'Baixar'."""
-    assert browser_client._ROTULO_SALVAR.search("Salvar como")
-    assert browser_client._ROTULO_SALVAR.search("Save as")
-    assert browser_client._ROTULO_SALVAR.search("Baixar")
+    assert browser_client.downloads._SAVE_LABEL.search("Salvar como")
+    assert browser_client.downloads._SAVE_LABEL.search("Save as")
+    assert browser_client.downloads._SAVE_LABEL.search("Baixar")
     # "Salvar no OneDrive" não é download local — não deve casar.
-    assert not browser_client._ROTULO_SALVAR.search("Salvar no OneDrive – engeform")
+    assert not browser_client.downloads._SAVE_LABEL.search("Salvar no OneDrive – engeform")
