@@ -86,6 +86,37 @@ def is_probably_not_proposal(text: str) -> bool:
     return bool(_NAO_PROPOSTA.search(normalize_for_comparison(text or "")))
 
 
+# Documentos que o COMPRADOR emite e que circulam na mesma thread da
+# cotação: a carta convite, a requisição, a planilha de itens, o quadro
+# comparativo, o mapa de cotação. Vinham parar na pasta do fornecedor como
+# se fossem proposta dele — no banco real do usuário estavam lá
+# `661_SUP_VALVULAS_202607_R00.xlsx`, `Requisição Sistema hardware…`,
+# `Mapa de Cotação…` e a própria `CARTA CONVITE N° SUP 2026-171`.
+#
+# Vale só para NOME DE ARQUIVO, nunca para o assunto: quase todo assunto de
+# proposta é uma resposta à carta convite e traz "CARTA CONVITE" escrito —
+# aplicar isto ao assunto descartaria justamente as propostas.
+#
+# `NNN_SUP_` é a convenção do usuário para os próprios documentos da obra
+# (661_SUP_…, 656_SUP_…), e nenhum fornecedor nomeia assim.
+_DOCUMENTO_DO_COMPRADOR = re.compile(
+    r"\b(carta convite|requisi\w*|minuta|mapa de cotacao|resumo executivo"
+    r"|ficha cadastral|qc)\b"
+    r"|^\d{3}_sup_"
+)
+
+
+def is_buyer_document(filename: str) -> bool:
+    """True quando o arquivo é documento do comprador, não do fornecedor.
+
+    Serve ao mesmo propósito de `is_probably_not_proposal`, mas para a outra
+    ponta: aquele descarta a papelada fiscal e de habilitação, este descarta
+    o que o próprio usuário mandou junto com a cotação e voltou anexado na
+    resposta.
+    """
+    return bool(_DOCUMENTO_DO_COMPRADOR.search(normalize_for_comparison(filename or "")))
+
+
 def sanitize(name: str, fallback: str = "sem-nome") -> str:
     """Transforma um texto qualquer num nome de pasta ou arquivo válido.
 

@@ -40,7 +40,7 @@ class _LocatorFalso:
         # Sub-busca dentro do cartão do anexo (ex.: a setinha do menu).
         return self._page.locator(selector)
 
-    def filter(self, has_text=None):
+    def filter(self, has_text=None, has_not_text=None):
         # Filtro do item de menu por texto — devolve o próprio item.
         return self
 
@@ -64,6 +64,10 @@ class _DownloadFalso:
     No Playwright real, sair do `with` sem exceção faz o gerenciador
     *esperar* o download. Marcamos isso: se aconteceu sem um acionador ter
     disparado nada, é o congelamento voltando.
+
+    `suggested_filename` existe porque o Playwright o expõe e o app precisa
+    dele: `expect_download` entrega QUALQUER download que a página dispare,
+    não necessariamente o que o clique pretendia.
     """
 
     def __init__(self, page):
@@ -80,6 +84,11 @@ class _DownloadFalso:
     @property
     def value(self):
         return self
+
+    @property
+    def suggested_filename(self):
+        # Sem configuração, chega o arquivo que foi pedido — o caso normal.
+        return self._page.nome_que_chega or self._page.ultimo_pedido
 
     def save_as(self, destino):
         self._page.salvou = destino
@@ -103,8 +112,13 @@ class _PageFalsa:
 
     def __init__(
         self, tem_anexo=True, tem_setinha=True, tem_item_salvar=True,
-        tem_botao_comum=None, marca_perdida=False,
+        tem_botao_comum=None, marca_perdida=False, nome_que_chega=None,
     ):
+        # `nome_que_chega` simula o download que vem de outro arquivo — o
+        # "Baixar tudo" do painel, ou o download atrasado da tentativa
+        # anterior chegando enquanto o app já espera o anexo seguinte.
+        self.nome_que_chega = nome_que_chega
+        self.ultimo_pedido = None
         self._tem_anexo = tem_anexo
         # `marca_perdida` simula o Outlook remontando o painel entre achar e
         # baixar, o que apaga a marca deixada em `find_attachments`.
@@ -129,9 +143,15 @@ class _PageFalsa:
 
     def locator(self, selector: str):
         if "data-facilitador-anexo" in selector:
+            # Guarda o que o app pediu, para o download saber o que "chegar".
+            pedido = selector.split('"')
+            if len(pedido) >= 2:
+                self.ultimo_pedido = pedido[1]
             return _LocatorFalso(self, 1 if self._marca_presente else 0)
         if "aria-haspopup" in selector:
             return _LocatorFalso(self, 1 if self._tem_setinha else 0)
+        if "menuitem" in selector:
+            return _LocatorFalso(self, 1 if self._tem_item_salvar else 0)
         if "button" in selector:
             return _LocatorFalso(self, 1 if self._tem_botao_comum else 0)
         # seletores do botão de hover (reserva): não existem neste Outlook
@@ -247,6 +267,70 @@ def test_cria_a_pasta_ao_baixar_de_verdade(tmp_path):
     assert browser_client.download_attachment(page, "Proposta.pdf", destino) is True
     assert destino.parent.is_dir()
     assert page.salvou == str(destino)
+
+
+def test_descarta_download_de_outro_arquivo(tmp_path):
+    """O sintoma que o usuário relatou: baixa sempre a mesma coisa.
+
+    `expect_download` entrega QUALQUER download que a página dispare. Sem
+    conferir, o pacote do "Baixar tudo" — ou o download atrasado do anexo
+    anterior — era gravado com o nome do arquivo que o app tinha pedido. O
+    caminho dizia uma coisa e o conteúdo era outra.
+    """
+    destino = tmp_path / "Angolini - Proposta.pdf"
+    page = _PageFalsa(nome_que_chega="Anexos.zip")
+
+    baixou = browser_client.download_attachment(page, "Proposta.pdf", destino)
+
+    assert baixou is False
+    assert page.salvou is None
+    assert not destino.exists()
+
+
+def test_aceita_o_nome_encurtado_pelo_navegador(tmp_path):
+    """Nome longo chega truncado; isso é o mesmo arquivo, não outro."""
+    pedido = "Proposta Comercial 0018532-2026 - ANGOLINI 07.08.2026.pdf"
+    page = _PageFalsa(nome_que_chega="Proposta Comercial 0018532-2026 - ANGOL.pdf")
+
+    assert browser_client.download_attachment(page, pedido, tmp_path / "x.pdf") is True
+
+
+def test_aceita_acento_e_espaco_reescritos(tmp_path):
+    """O navegador reescreve o nome ao salvar; não é arquivo trocado."""
+    page = _PageFalsa(nome_que_chega="Requisicao Sistema  hardware.xlsx")
+
+    assert browser_client.download_attachment(
+        page, "Requisição Sistema hardware.xlsx", tmp_path / "x.xlsx"
+    ) is True
+
+
+class TestArquivoPedido:
+    """A regra crua, sem navegador."""
+
+    def test_extensao_diferente_nunca_passa(self):
+        """É o caso do "Baixar tudo": zip no lugar do pdf."""
+        assert not browser_client._e_o_arquivo_pedido("Anexos.zip", "Proposta.pdf")
+
+    def test_outro_anexo_do_mesmo_tipo_nao_passa(self):
+        assert not browser_client._e_o_arquivo_pedido(
+            "260722 - PT - BERMAD - R00.pdf", "PC 05358 - NIT 3320.pdf"
+        )
+
+    def test_mesmo_arquivo_passa(self):
+        assert browser_client._e_o_arquivo_pedido("Proposta.pdf", "Proposta.pdf")
+
+    def test_nome_vazio_nao_passa(self):
+        assert not browser_client._e_o_arquivo_pedido("", "Proposta.pdf")
+
+
+def test_rotulo_nao_salvar_afasta_o_baixar_tudo():
+    """"Baixar tudo" casa com o padrão de salvar e empacota todos os anexos."""
+    assert browser_client._ROTULO_SALVAR.search("Baixar tudo")  # por isso o filtro
+    assert browser_client._ROTULO_NAO_SALVAR.search("Baixar tudo")
+    assert browser_client._ROTULO_NAO_SALVAR.search("Salvar tudo no OneDrive – engeform")
+    # E não pode afastar o item certo.
+    assert not browser_client._ROTULO_NAO_SALVAR.search("Salvar como")
+    assert not browser_client._ROTULO_NAO_SALVAR.search("Baixar")
 
 
 def test_rotulo_salvar_reconhece_salvar_como():
