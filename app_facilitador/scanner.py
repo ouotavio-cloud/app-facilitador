@@ -385,6 +385,7 @@ def _baixar_anexos_abertos(
         for nome in browser_client.find_attachments(page, sorted(_EXTENSIONS))
         if attachments.is_document(nome)
         and not attachments.is_probably_not_proposal(nome)
+        and not attachments.is_buyer_document(nome)
     ]
     if not arquivos:
         # O e-mail dizia ter anexo, mas nenhum é proposta — só imagem, nota

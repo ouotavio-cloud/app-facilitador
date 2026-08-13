@@ -116,6 +116,50 @@ o usuário resolver à mão. Se a busca voltar com muita coisa em
 pulou) e, se precisar, uma captura de uma linha fixada para calibrar
 igual foi feito com os anexos.
 
+## v16: baixava sempre os mesmos arquivos e não baixava o que dizia baixar
+
+Relato do usuário: falsos positivos, baixa sempre as mesmas coisas, e não
+baixa o que o resumo diz estar baixando. São três bugs distintos, e o
+primeiro é o mais grave que este app já teve.
+
+**1. `open_message` não confirmava que o painel trocou de e-mail.** Clicava na
+linha, esperava 2 segundos fixos e lia o painel. Quando o clique não pegava ou
+a montagem demorava mais que isso, `find_attachments` lia os anexos do e-mail
+**anterior** — e eles eram arquivados no processo e na pasta **deste**. Um bug
+só que produz os três sintomas: os mesmos arquivos baixados de novo a cada
+e-mail, cada um na pasta errada, e o anexo verdadeiro nunca baixado.
+
+Agora `_painel_trocou` exige duas provas antes de ler qualquer coisa:
+`aria-selected="true"` na linha clicada (conferido no HTML real: 1 linha de
+12) prova que é o e-mail **certo**; a impressão do painel ter mudado prova que
+ele terminou de **trocar**. Sem as duas, devolve False e o e-mail é pulado —
+um e-mail pulado aparece no resumo, um anexo na pasta errada não aparece em
+lugar nenhum.
+
+**2. O download aceitava qualquer arquivo que chegasse.** `expect_download`
+entrega o próximo download da página, seja ele qual for, e o app gravava com o
+nome que tinha pedido. Duas formas de gravar conteúdo trocado: o botão
+**"Baixar tudo"** do painel (existe de verdade, conferido no HTML — empacota
+todos os anexos num zip) e o download atrasado da tentativa anterior chegando
+enquanto o app já espera o próximo. `_e_o_arquivo_pedido` compara
+`suggested_filename` com o pedido, tolerando acento/espaço/truncamento mas
+exigindo a mesma extensão.
+
+**3. O menu procurava o item em toda a página.** `page.get_by_role("menuitem")`
+podia pegar o item de um menu anterior ainda montado no DOM — o "Salvar como"
+do anexo errado. Agora é `[role="menuitem"]:visible`, e `_ROTULO_NAO_SALVAR`
+afasta "Baixar tudo", que casa com o padrão de salvar por conter "baixar".
+
+**Falsos positivos: eram os documentos do COMPRADOR.** A pasta do fornecedor
+recebia `661_SUP_VALVULAS_202607_R00.xlsx`, `Requisição Sistema hardware…`,
+`Mapa de Cotação…`, `QC SUP.171…` e a própria `CARTA CONVITE N° SUP 2026-171` —
+tudo que o usuário mandou junto com a cotação e voltou anexado na resposta.
+`attachments.is_buyer_document` os reconhece. **Só vale para nome de arquivo**,
+nunca para o assunto: quase todo assunto de proposta responde a uma carta
+convite e traz "CARTA CONVITE" escrito, então aplicar ao assunto descartaria
+justamente as propostas. Conferido contra os 30 nomes reais do banco: 6
+barrados, as 24 propostas mantidas.
+
 ## v14: por que propostas não eram achadas (duas causas) e o cadastro de fornecedores
 
 O usuário mandou prints de duas propostas que o app não achou — molivetto2

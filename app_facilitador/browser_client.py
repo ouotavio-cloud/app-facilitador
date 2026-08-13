@@ -599,16 +599,93 @@ def open_message(page: Page, conv_id: str) -> bool:
     if linha.count() == 0:
         return False
 
+    antes = _impressao_do_painel(page)
+
     try:
         linha.click(timeout=_MESSAGE_OPEN_TIMEOUT_MS)
     except Exception:  # noqa: BLE001 - linha descartada pela virtualização
         return False
 
-    # O painel de leitura monta em etapas; sem esta pausa a busca por
-    # anexos acontece antes de eles existirem.
-    page.wait_for_timeout(2_000)
+    if not _painel_trocou(page, conv_id, antes):
+        _log.warning(
+            "cliquei em %s mas o painel de leitura não trocou; não vou ler os "
+            "anexos para não atribuí-los ao e-mail errado", conv_id
+        )
+        return False
+
     _log.info("abriu o e-mail %s", conv_id)
     return True
+
+
+# Identidade do que está aberto no painel de leitura AGORA: o assunto, o
+# remetente e os nomes dos anexos. Muda quando o e-mail muda.
+_JS_IMPRESSAO_PAINEL = """
+() => {
+    const painel = document.querySelector('[role="main"]');
+    if (!painel) return '';
+
+    // Os nomes dos anexos são a parte mais sensível: é justamente o que a
+    // varredura vai ler em seguida, então é o que precisa ter trocado.
+    const anexos = Array.from(painel.querySelectorAll('[role="option"][aria-label]'))
+        .map(el => el.getAttribute('aria-label'))
+        .join('|');
+
+    // O texto do topo do painel cobre assunto e remetente sem depender de
+    // classe de CSS gerada pelo build.
+    const topo = (painel.innerText || '').slice(0, 400);
+
+    return anexos + '###' + topo;
+}
+"""
+
+# Quanto esperar o painel de leitura assumir o e-mail clicado. Generoso: um
+# anexo pesado ou uma rede de obra ruim atrasam a montagem, e desistir cedo
+# demais faria o app pular proposta boa.
+_PAINEL_TROCA_TIMEOUT_MS = 10_000
+_PAINEL_POLL_MS = 250
+
+
+def _impressao_do_painel(page: Page) -> str:
+    """O que está aberto no painel agora, resumido numa string comparável."""
+    try:
+        return page.evaluate(_JS_IMPRESSAO_PAINEL)
+    except Exception:  # noqa: BLE001 - painel navegando; trata como desconhecido
+        return ""
+
+
+def _painel_trocou(page: Page, conv_id: str, antes: str) -> bool:
+    """Confirma que o painel passou a mostrar ESTE e-mail, e não o anterior.
+
+    Sem esta confirmação o app clicava na linha, esperava dois segundos
+    fixos e lia o painel — desse jeito, quando o clique não pegava ou a
+    montagem demorava mais que isso, ele lia os anexos do e-mail
+    **anterior** e os arquivava no processo e na pasta deste. O sintoma na
+    caixa do usuário era o pior possível: baixar sempre os mesmos arquivos e
+    não baixar o que o resumo dizia estar baixando.
+
+    Duas provas, e as duas precisam valer:
+
+    1. `aria-selected="true"` na linha clicada — o Outlook marca assim a
+       conversa aberta (conferido no HTML real: 1 linha de 12). É o que
+       garante que estamos no e-mail **certo**.
+    2. A impressão do painel mudou — é o que garante que ele terminou de
+       **trocar**, e não que ainda mostra o anterior.
+
+    Devolve False em vez de seguir na dúvida. Um e-mail pulado aparece no
+    resumo; um anexo arquivado na pasta errada não aparece em lugar nenhum.
+    """
+    selecionado = f'[data-convid="{conv_id}"][aria-selected="true"]'
+    prazo = _PAINEL_TROCA_TIMEOUT_MS
+    while prazo > 0:
+        page.wait_for_timeout(_PAINEL_POLL_MS)
+        prazo -= _PAINEL_POLL_MS
+
+        if page.locator(selecionado).count() == 0:
+            continue
+        if _impressao_do_painel(page) != antes:
+            return True
+
+    return False
 
 
 def find_attachments(page: Page, extensions: list[str]) -> list[str]:
@@ -679,6 +756,48 @@ def _localizar_anexo(page: Page, filename: str):
     return alvo
 
 
+def _nome_comparavel(nome: str) -> str:
+    """Nome de arquivo reduzido ao que dá para comparar entre dois lados.
+
+    O navegador reescreve o nome ao salvar — troca acento, colapsa espaço,
+    substitui caractere proibido. Comparar cru daria diferença onde é o
+    mesmo arquivo.
+    """
+    import unicodedata
+
+    sem_acento = unicodedata.normalize("NFKD", nome or "")
+    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9.]+", "", sem_acento.lower())
+
+
+def _e_o_arquivo_pedido(chegou: str, pedido: str) -> bool:
+    """True se o download que chegou é mesmo o anexo que o app pediu.
+
+    `expect_download` entrega **qualquer** download que a página dispare, e
+    não necessariamente o que o clique pretendia. Sem conferir, dois erros
+    passavam despercebidos e gravavam conteúdo trocado com o nome certo:
+
+    - o botão **"Baixar tudo"** do painel, que empacota todos os anexos num
+      zip só — o arquivo gravado como "Fulano - Proposta.pdf" seria o pacote
+      inteiro;
+    - o download **atrasado** da tentativa anterior, que chega enquanto o
+      app já espera pelo anexo seguinte.
+
+    Aceita truncamento (o Outlook encurta nome longo), mas exige a mesma
+    extensão: um `.zip` chegando no lugar de um `.pdf` é o caso 1 acima.
+    """
+    a, b = _nome_comparavel(chegou), _nome_comparavel(pedido)
+    if not a or not b:
+        return False
+    if a.rpartition(".")[2] != b.rpartition(".")[2]:
+        return False
+    return a == b or a.startswith(b[:20]) or b.startswith(a[:20])
+
+
+class _ArquivoTrocado(Exception):
+    """Chegou um download, mas de outro arquivo — não pode ser gravado."""
+
+
 class _SemAcionador(Exception):
     """O botão/menu de baixar não foi encontrado — não há download a esperar.
 
@@ -723,15 +842,27 @@ def download_attachment(page: Page, filename: str, destino) -> bool:
             with page.expect_download(timeout=_DOWNLOAD_START_TIMEOUT_MS) as download:
                 if not tentativa(page, alvo):
                     raise _SemAcionador
+
+            chegou = download.value
+            if not _e_o_arquivo_pedido(chegou.suggested_filename, filename):
+                _log.warning(
+                    "pedi %r e veio %r — descartado para não gravar conteúdo "
+                    "trocado", filename, chegou.suggested_filename,
+                )
+                raise _ArquivoTrocado
+
             # A pasta nasce agora, com o download já começado — e não antes,
             # ao montar o caminho. Criá-la cedo enchia `Propostas` de árvores
             # `Obra/Processo/Fornecedor` vazias toda vez que um download
             # falhava: o usuário abria a pasta da proposta e não havia nada
             # dentro, sem nada indicando que o arquivo nunca chegou.
             destino.parent.mkdir(parents=True, exist_ok=True)
-            download.value.save_as(str(destino))
+            chegou.save_as(str(destino))
             _log.info("baixou %r via %s", filename, tentativa.__name__)
             return True
+        except _ArquivoTrocado:
+            _fechar_menu_aberto(page)
+            continue
         except _SemAcionador:
             _log.debug("%s: acionador não encontrado para %r", tentativa.__name__, filename)
             _fechar_menu_aberto(page)
@@ -769,6 +900,13 @@ def _fechar_menu_aberto(page: Page) -> None:
 # máquina, e é outro fluxo (nem gera download local para o Playwright pegar).
 _ROTULO_SALVAR = re.compile(r"salvar como|baixar|download|save as", re.I)
 
+# Rótulos que casam com o de salvar mas fazem outra coisa. "Baixar tudo"
+# existe de verdade no painel de leitura do usuário (conferido no HTML real)
+# e empacota TODOS os anexos num zip — clicar nele gravaria o pacote inteiro
+# com o nome de um arquivo só. "Salvar tudo no OneDrive" salva na nuvem e nem
+# gera download local.
+_ROTULO_NAO_SALVAR = re.compile(r"\btudo\b|\ball\b|onedrive", re.I)
+
 
 def _baixar_pelo_menu(page: Page, alvo) -> bool:
     """Abre a setinha (˅) do anexo e clica em "Salvar como".
@@ -792,7 +930,18 @@ def _baixar_pelo_menu(page: Page, alvo) -> bool:
         return False
     gatilho.click(timeout=5_000)
 
-    item = page.get_by_role("menuitem").filter(has_text=_ROTULO_SALVAR).first
+    # `:visible` limita ao menu que ACABOU de abrir. Sem isso a busca varria
+    # a página inteira e podia pegar o item de um menu anterior que ficou
+    # montado no DOM — clicando no "Salvar como" do anexo errado.
+    #
+    # `has_not_text` afasta "Baixar tudo", que casa com o padrão de salvar
+    # (contém "baixar") mas empacota todos os anexos num zip.
+    item = (
+        page.locator('[role="menuitem"]:visible')
+        .filter(has_text=_ROTULO_SALVAR)
+        .filter(has_not_text=_ROTULO_NAO_SALVAR)
+        .first
+    )
     try:
         # `click` espera o item aparecer sozinho — o menu monta com um
         # pequeno atraso depois do clique na setinha.

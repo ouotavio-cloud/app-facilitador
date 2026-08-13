@@ -336,6 +336,56 @@ class TestPropostaRevisada:
         assert attachments.unique_path(destino) == destino
 
 
+class TestDocumentoDoComprador:
+    """Nomes reais tirados do banco do usuário — os que estavam na pasta
+    do fornecedor sem serem proposta dele."""
+
+    @pytest.mark.parametrize(
+        "arquivo",
+        [
+            "661_SUP_VALVULAS_202607_R00.xlsx",
+            "661_SUP_TUBOS_CONEXOES_AC_202707_R00.xlsx",
+            "656_SUP_PLANILHA Painéis Elétricos.xlsx",
+            "Requisição Sistema hardware para SVP (rev B1) SWITCHs e PSVP.xlsx",
+            "Mapa de Cotação - TUBOS E CONEXOES EM FERRO FUNDIDO.xlsx",
+            "CARTA CONVITE N° SUP 2026-171 - PPP FASE 2.pdf",
+            "Minuta padrão de Fornecimento.docx",
+            "QC SUP.171 - PAINÉIS ELÉTRICOS - FASE 2.pdf",
+            "260807-RESUMO EXECUTIVO PPPs F2 - INSTAL ELE+HID+PCI.pdf",
+            "Ficha cadastral ETE São Miguel.pdf",
+        ],
+    )
+    def test_documento_do_comprador_e_reconhecido(self, arquivo):
+        assert attachments.is_buyer_document(arquivo)
+
+    @pytest.mark.parametrize(
+        "arquivo",
+        [
+            "Proposta Comercial 0018532-2026 - ANGOLINI 07.08.2026.pdf",
+            "260722 - PT - BERMAD - R00.pdf",
+            "PC 05358 - NIT 3320 - 5 - CONSORCIO EES ETA ITABIRA.pdf",
+            "PC-0336352-R3MSS.pdf",
+            "41675-COM.PDF",
+            "PTC 285_26 - ENGEFORM.pdf",
+            "57336-4 - Proposta Comercial - Proposta 3 - NOBREAK SINGELO.pdf",
+            "PROPOSTA COMERCIAL CROSSFOX - SOLICITAÇÃO DE COTAÇÃO - ENGEFORM.xlsx",
+        ],
+    )
+    def test_proposta_de_verdade_passa(self, arquivo):
+        """O filtro não pode custar nenhuma proposta — é o que ele existe para achar."""
+        assert not attachments.is_buyer_document(arquivo)
+
+    def test_nao_se_aplica_ao_assunto_do_email(self):
+        """Quase todo assunto de proposta responde a uma carta convite.
+
+        Se esta regra valesse para o assunto, ela descartaria justamente as
+        propostas — daí ela ser separada de `is_probably_not_proposal`.
+        """
+        assunto = "RES: SUP.2026-185 | CARTA CONVITE | 661-TAIAÇUPEBA | TUBOS"
+
+        assert not attachments.is_probably_not_proposal(assunto)
+
+
 class TestPastasVazias:
     """Faxina das árvores que sobraram de quando a pasta nascia antes do
     download — o usuário abria `Propostas` e via a estrutura montada, sem
