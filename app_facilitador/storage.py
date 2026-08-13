@@ -75,6 +75,25 @@ CREATE TABLE IF NOT EXISTS attachments (
 
 CREATE INDEX IF NOT EXISTS idx_attachments_code ON attachments(code);
 
+-- Fornecedores que o usuário declara — opcional, e por isso vazio na
+-- primeira execução. Serve a duas coisas que o app não consegue adivinhar:
+--
+-- 1. **Achar a proposta.** A varredura casa e-mail com processo pelo código
+--    no assunto. Quando o fornecedor responde sem repetir o código (ou o
+--    Outlook agrupa a resposta numa thread cujo assunto é outro), não há o
+--    que casar. Dizer "estes endereços são fornecedores" dá um segundo
+--    critério, independente do assunto.
+-- 2. **Nomear a pasta.** Sem cadastro o nome sai do domínio, que erra em
+--    e-mail pessoal: `molivetto2@gmail.com` virava a pasta "Molivetto2".
+--
+-- `match` guarda o e-mail inteiro OU só o domínio, normalizado em
+-- minúsculas: o domínio cobre a empresa toda quando quem responde muda.
+CREATE TABLE IF NOT EXISTS suppliers (
+    match TEXT PRIMARY KEY,
+    name TEXT,
+    created_at TEXT NOT NULL
+);
+
 -- Preferências do usuário (hoje: onde as propostas são arquivadas).
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -149,6 +168,74 @@ def remove_process(connection: sqlite3.Connection, code: str) -> bool:
     """Remove um processo do acompanhamento. Devolve True se existia."""
     cursor = connection.execute("DELETE FROM processes WHERE code = ?", (code,))
     return cursor.rowcount > 0
+
+
+def normalize_supplier_match(raw: str) -> str:
+    """Forma canônica do que o usuário digitou: e-mail inteiro ou domínio.
+
+    Aceita as três formas que uma pessoa escreve naturalmente —
+    `daniel@dhl.com.br`, `dhl.com.br` e `@dhl.com.br` — e guarda sempre em
+    minúsculas, porque endereço de e-mail não distingue caixa no domínio e
+    o usuário não deveria precisar acertar isso.
+    """
+    limpo = (raw or "").strip().lower()
+    return limpo[1:] if limpo.startswith("@") else limpo
+
+
+def add_supplier(
+    connection: sqlite3.Connection, match: str, name: str | None = None
+) -> bool:
+    """Cadastra um fornecedor por e-mail ou domínio. True se era novo.
+
+    Recadastrar o mesmo endereço atualiza o nome, para corrigir sem apagar.
+    """
+    normalizado = normalize_supplier_match(match)
+    if not normalizado:
+        return False
+
+    cursor = connection.execute(
+        """
+        INSERT INTO suppliers (match, name, created_at) VALUES (?, ?, ?)
+        ON CONFLICT(match) DO UPDATE SET name = excluded.name
+        """,
+        (normalizado, (name or "").strip() or None,
+         datetime.now().isoformat(timespec="seconds")),
+    )
+    return cursor.rowcount > 0
+
+
+def remove_supplier(connection: sqlite3.Connection, match: str) -> bool:
+    cursor = connection.execute(
+        "DELETE FROM suppliers WHERE match = ?", (normalize_supplier_match(match),)
+    )
+    return cursor.rowcount > 0
+
+
+def list_suppliers(connection: sqlite3.Connection) -> list[dict]:
+    """Fornecedores cadastrados, com quantas propostas já vieram de cada um."""
+    rows = connection.execute(
+        """
+        SELECT s.match, s.name, s.created_at,
+               (SELECT COUNT(*) FROM messages m
+                 WHERE LOWER(m.sender_email) = s.match
+                    OR LOWER(m.sender_email) LIKE '%@' || s.match) AS message_count
+        FROM suppliers s
+        ORDER BY s.match
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def supplier_registry(connection: sqlite3.Connection) -> dict[str, str | None]:
+    """Cadastro de fornecedores como dicionário `match -> nome`.
+
+    Carregado uma vez por varredura e passado adiante, para não consultar o
+    banco a cada e-mail percorrido.
+    """
+    return {
+        row["match"]: row["name"]
+        for row in connection.execute("SELECT match, name FROM suppliers")
+    }
 
 
 def list_processes(connection: sqlite3.Connection) -> list[dict]:

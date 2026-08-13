@@ -42,6 +42,55 @@ def parse_received_at(raw_date: str | None) -> datetime | None:
     return None
 
 
+# As marcas que o Outlook empilha no COMEÇO do rótulo da linha, antes do
+# remetente. Só "Tem anexos" e "Fixado" são lidas pelo app; as outras estão
+# aqui para serem consumidas quando vierem na frente delas.
+_ROW_FLAGS = (
+    "Tem anexos", "Fixado", "Importante", "Não lida", "Não lido",
+    "Sinalizada", "Sinalizado", "Respondida", "Encaminhada",
+)
+
+
+def _leading_flags(aria_label: str) -> str:
+    """As flags do começo do rótulo, e nada além delas.
+
+    Consome uma sequência de marcas conhecidas a partir do início e para na
+    primeira palavra que não é uma — que é o remetente, ou o assunto quando
+    não há remetente. Ancorar no começo é o que separa a flag de verdade da
+    mesma palavra escrita no assunto.
+    """
+    resto = aria_label.lstrip()
+    encontradas = []
+    while True:
+        for flag in _ROW_FLAGS:
+            if resto.startswith(flag):
+                encontradas.append(flag)
+                resto = resto[len(flag):].lstrip()
+                break
+        else:
+            return " ".join(encontradas)
+
+
+def _flag_zone(aria_label: str, sender_name: str) -> str:
+    """O trecho do aria-label onde as flags da linha podem aparecer.
+
+    As flags vêm antes do nome do remetente, então o nome é a melhor baliza
+    — quando ele existe E aparece no rótulo. Fora disso era preciso outro
+    limite, e a falta dele estragava a leitura nos dois sentidos:
+
+    - **sem `sender_name`**, o prefixo saía vazio e "Tem anexos" nunca era
+      encontrado. No banco real do usuário isso valia para 235 dos 1115
+      e-mails — um quinto da caixa com o flag falso por construção;
+    - **com `sender_name` ausente do rótulo**, `split` devolve o rótulo
+      inteiro, e aí qualquer "Fixado" escrito no assunto virava flag.
+
+    Sem a baliza do remetente, sobra ler as flags do começo (`_leading_flags`).
+    """
+    if sender_name and sender_name in aria_label:
+        return aria_label.split(sender_name, 1)[0]
+    return _leading_flags(aria_label)
+
+
 def parse_message_row(raw: dict) -> dict:
     """Normaliza um item bruto da lista em um dicionário de mensagem.
 
@@ -53,10 +102,7 @@ def parse_message_row(raw: dict) -> dict:
     aria_label = raw.get("aria_label") or ""
     sender_name = raw.get("sender_name") or ""
 
-    # As flags aparecem sempre antes do nome do remetente no aria-label;
-    # limitar a busca a esse prefixo evita falso positivo quando as
-    # mesmas palavras aparecem no assunto ou no preview da mensagem.
-    prefix = aria_label.split(sender_name, 1)[0] if sender_name else ""
+    prefix = _flag_zone(aria_label, sender_name)
 
     raw_date = raw.get("date_title")
     if not raw_date:

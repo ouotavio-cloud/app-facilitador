@@ -941,6 +941,48 @@ extensoes => {
 """
 
 
+# Mede se o painel de leitura está mostrando UMA mensagem ou uma CONVERSA
+# inteira, e procura o controle que expande as mensagens recolhidas.
+#
+# É o buraco que sobrou: a lista do Outlook agrupa por conversa
+# (`data-convid`), e abrir a linha mostra só a mensagem mais recente da
+# thread. A proposta que o fornecedor mandou lá atrás fica recolhida, e os
+# anexos dela nem chegam ao DOM — no banco real do usuário havia duas linhas
+# para a SUP.2026-185, embora quatro fornecedores tenham respondido.
+#
+# Não dá para calibrar esse clique sem ver a estrutura real (foi tentar
+# adivinhar acionador que fez o app fixar e-mail). Este relatório é o que
+# permite acertar da próxima vez, sem outra compilação às cegas.
+_JS_DUMP_CONVERSA = """
+() => {
+    const painel = document.querySelector('[role="main"]') || document.body;
+
+    // Cada corpo de mensagem renderizado. Mais de um = a thread está
+    // expandida; exatamente um = só a última mensagem está aberta.
+    const corpos = painel.querySelectorAll('[role="document"]');
+
+    // Candidatos a cabeçalho de mensagem recolhida: qualquer coisa
+    // clicável/expansível dentro do painel, com o rótulo e o estado.
+    const candidatos = Array.from(
+        painel.querySelectorAll('[aria-expanded], [role="button"], [role="heading"], button')
+    ).slice(0, 60).map(el => ({
+        tag: el.tagName.toLowerCase(),
+        role: el.getAttribute('role'),
+        expandido: el.getAttribute('aria-expanded'),
+        rotulo: (el.getAttribute('aria-label') || el.getAttribute('title')
+                 || (el.textContent || '').trim()).slice(0, 90),
+    })).filter(c => c.rotulo);
+
+    return {
+        corpos_de_mensagem_no_painel: corpos.length,
+        conversa_agrupada_provavel: corpos.length <= 1,
+        candidatos_a_expandir: candidatos,
+        html_do_topo_do_painel: painel.outerHTML.slice(0, 6000),
+    };
+}
+"""
+
+
 def dump_message_debug(page: Page, destino) -> None:
     """Salva a estrutura real dos anexos, para calibrar o download.
 
@@ -948,8 +990,11 @@ def dump_message_debug(page: Page, destino) -> None:
     sem aviso. O diagnóstico antigo salvava só `[role=main]`, e os anexos do
     novo Outlook ficam FORA dessa região — por isso o arquivo saía sem eles.
     Agora salvamos: (1) um relatório focado em cada anexo, com os controles
-    (botões/menus) ao redor, que é o que preciso para acertar o clique; e
-    (2) o `body` inteiro como reserva, para nada escapar.
+    (botões/menus) ao redor, que é o que preciso para acertar o clique;
+    (2) um relatório da CONVERSA, que diz se o painel está mostrando a thread
+    inteira ou só a última mensagem — é o que falta para alcançar a proposta
+    que o fornecedor mandou no meio do assunto; e (3) o `body` inteiro como
+    reserva, para nada escapar.
     """
     import json
 
@@ -959,6 +1004,11 @@ def dump_message_debug(page: Page, destino) -> None:
         anexos = [{"erro": str(exc)}]
 
     try:
+        conversa = page.evaluate(_JS_DUMP_CONVERSA)
+    except Exception as exc:  # noqa: BLE001 - idem
+        conversa = {"erro": str(exc)}
+
+    try:
         corpo = page.evaluate("() => document.body.outerHTML")
     except Exception:  # noqa: BLE001
         corpo = ""
@@ -966,6 +1016,8 @@ def dump_message_debug(page: Page, destino) -> None:
     conteudo = (
         "=== RELATÓRIO DOS ANEXOS (controles ao redor de cada arquivo) ===\n"
         + json.dumps(anexos, ensure_ascii=False, indent=2)
+        + "\n\n=== RELATÓRIO DA CONVERSA (thread inteira ou só a última?) ===\n"
+        + json.dumps(conversa, ensure_ascii=False, indent=2)
         + "\n\n=== BODY COMPLETO (reserva) ===\n"
         + corpo
     )

@@ -94,6 +94,50 @@ def test_flags_are_not_matched_in_subject_or_preview():
     assert result["has_attachments"] is False
 
 
+def test_flags_are_read_even_without_a_sender_name():
+    """Sem remetente extraído, o flag era falso por construção.
+
+    O prefixo saía vazio (`if sender_name else ""`) e "Tem anexos" nunca
+    era encontrado. No banco real do usuário isso valia para 235 dos 1115
+    e-mails — e o scanner usava esse flag para decidir o que abrir.
+    """
+    item = {
+        "conv_id": "x",
+        "aria_label": "Tem anexos RES: SUP.2026-185 | CARTA CONVITE | 661-TAIAÇUPEBA",
+        "sender_name": None,
+        "sender_email": None,
+        "subject": "RES: SUP.2026-185 | CARTA CONVITE | 661-TAIAÇUPEBA",
+        "date_title": "Ter, 28/07/2026 18:17",
+        "preview": None,
+    }
+
+    result = inbox_parser.parse_message_row(item)
+
+    assert result["has_attachments"] is True
+
+
+def test_flags_are_not_matched_when_the_sender_is_absent_from_the_label():
+    """`split` num nome que não está no rótulo devolve o rótulo INTEIRO.
+
+    O outro lado do mesmo defeito: em vez de nunca achar a flag, passava a
+    achá-la em qualquer lugar — inclusive no assunto.
+    """
+    item = {
+        "conv_id": "x",
+        "aria_label": "Outro Remetente Assunto citando Fixado e tem anexos no fim",
+        "sender_name": "Nome Que Não Está No Rótulo",
+        "sender_email": "fulano@example.com",
+        "subject": "Assunto citando Fixado e tem anexos no fim",
+        "date_title": "Qui, 01/01/2026 08:00",
+        "preview": None,
+    }
+
+    result = inbox_parser.parse_message_row(item)
+
+    assert result["is_pinned"] is False
+    assert result["has_attachments"] is False
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

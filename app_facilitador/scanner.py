@@ -48,6 +48,9 @@ class ScanResult:
     # fiscal, contrato, habilitação) — não são abertos nem baixados.
     skipped_non_proposal: int = 0
     stopped: bool = False
+    # E-mails abertos porque o remetente está no cadastro de fornecedores,
+    # sem o código ter casado pelo assunto. Mede o que o cadastro alcançou.
+    opened_by_supplier: int = 0
     # Pastas vazias levadas embora no fim da varredura — sobras das versões
     # que criavam a árvore da proposta antes de saber se o download daria certo.
     empty_dirs_removed: int = 0
@@ -74,6 +77,11 @@ class ScanResult:
         if self.codes_in_content:
             lines.append(
                 f"Códigos que só apareciam no corpo/anexo: {self.codes_in_content}"
+            )
+        if self.opened_by_supplier:
+            lines.append(
+                f"E-mails abertos por serem de fornecedor cadastrado: "
+                f"{self.opened_by_supplier}"
             )
         if self.skipped_non_proposal:
             lines.append(
@@ -171,6 +179,8 @@ def scan(
         # não conta como baixada e a varredura a traz de volta.
         ja_baixados = storage.downloaded_conversations_on_disk(connection)
         pasta_propostas = proposals_dir(connection)
+        # Carregado uma vez: é consultado a cada e-mail percorrido.
+        fornecedores = storage.supplier_registry(connection)
 
         with browser_client.open_inbox_session(headless=headless) as page:
             if folder is not None:
@@ -198,8 +208,6 @@ def scan(
                     continue
                 if message["conv_id"] in ja_baixados:
                     continue
-                if not message.get("has_attachments"):
-                    continue
                 # Não abre (nem baixa) e-mail que é claramente nota fiscal,
                 # contrato ou habilitação. Esses citam o código na thread da
                 # cotação e casavam, mas não são proposta — abri-los só
@@ -210,16 +218,50 @@ def scan(
                     result.skipped_non_proposal += 1
                     continue
 
+                # Segundo critério, independente do assunto: o usuário
+                # declarou que este endereço é de fornecedor. Vale quando o
+                # fornecedor responde sem repetir o código — que é
+                # exatamente quando o casamento por assunto não tem o que
+                # casar. Vazio até alguém cadastrar, então não muda nada
+                # para quem não usa.
+                de_fornecedor = attachments.is_registered_supplier(
+                    message.get("sender_email"), fornecedores
+                )
+
                 try:
                     if matches and download_attachments:
+                        # Repare que o flag "Tem anexos" da lista NÃO é
+                        # consultado aqui. Ele já foi, e barrava 11 dos 18
+                        # e-mails que casaram com processo cadastrado no banco
+                        # real do usuário — todos respostas de fornecedor a
+                        # CARTA CONVITE, exatamente o que a varredura existe
+                        # para achar. O flag vem do rótulo da linha, que o
+                        # Outlook nem sempre monta (ver `inbox_parser`), e uma
+                        # dica que falha assim não pode ter poder de veto sobre
+                        # o sinal forte, que é o código do processo no assunto.
+                        # Quem decide se há anexo é o painel de leitura aberto:
+                        # sem anexo-proposta, `_baixar_anexos_abertos` devolve
+                        # vazio e segue a vida.
                         _download_proposal(
                             page, connection, message, matches, processes,
-                            pasta_propostas, result, keep_technical,
+                            pasta_propostas, result, keep_technical, fornecedores,
                         )
-                    elif deep_scan and not matches:
+                    elif not matches and (
+                        de_fornecedor
+                        or (deep_scan and message.get("has_attachments"))
+                    ):
+                        # Fornecedor cadastrado abre sempre; sem cadastro, a
+                        # varredura profunda ainda exige o flag de anexo. Sem
+                        # essa trava a profunda abriria a caixa inteira — e
+                        # abrir marca como lido no Outlook do usuário. O
+                        # cadastro é o que troca palpite por declaração: a
+                        # lista é do usuário, e ele só põe nela quem manda
+                        # proposta.
+                        if de_fornecedor:
+                            result.opened_by_supplier += 1
                         _deep_scan_message(
                             page, connection, message, processes,
-                            pasta_propostas, result, keep_technical,
+                            pasta_propostas, result, keep_technical, fornecedores,
                         )
                 except Exception as error:  # noqa: BLE001 - idem: não derruba a varredura
                     _log.exception("erro ao processar anexo de %r", message.get("subject"))
@@ -292,6 +334,7 @@ def _download_proposal(
     base_dir: Path,
     result: ScanResult,
     keep_technical: bool = False,
+    known_suppliers: dict[str, str | None] | None = None,
 ) -> None:
     """Abre um e-mail identificado como proposta, baixa os anexos e enriquece.
 
@@ -310,7 +353,8 @@ def _download_proposal(
     obra = next((p["obra"] for p in processes if p["code"] == codigo), None)
 
     baixados = _baixar_anexos_abertos(
-        page, connection, message, codigo, obra, base_dir, result, keep_technical
+        page, connection, message, codigo, obra, base_dir, result, keep_technical,
+        known_suppliers,
     )
     # Depois de baixar, lê o corpo e o texto dos PDFs para achar códigos que
     # não estavam no assunto — reforça a confiança e pega processos citados
@@ -327,6 +371,7 @@ def _baixar_anexos_abertos(
     base_dir: Path,
     result: ScanResult,
     keep_technical: bool,
+    known_suppliers: dict[str, str | None] | None = None,
 ) -> list[Path]:
     """Baixa e arquiva os anexos-documento do e-mail já aberto.
 
@@ -351,6 +396,7 @@ def _baixar_anexos_abertos(
         message.get("sender_name"),
         message.get("sender_email"),
         keep_technical=keep_technical,
+        known_suppliers=known_suppliers,
     )
 
     gravados: list[Path] = []
@@ -432,6 +478,7 @@ def _deep_scan_message(
     base_dir: Path,
     result: ScanResult,
     keep_technical: bool = False,
+    known_suppliers: dict[str, str | None] | None = None,
 ) -> None:
     """Varredura profunda: abre um e-mail não identificado e lê o CORPO
     para achar o código escrito ali (não só no assunto).
@@ -473,7 +520,8 @@ def _deep_scan_message(
     # Casou pelo corpo: agora sim baixa os anexos-proposta de verdade,
     # com o mesmo filtro e preferência pela comercial do download normal.
     _baixar_anexos_abertos(
-        page, connection, message, codigo, obra, base_dir, result, keep_technical
+        page, connection, message, codigo, obra, base_dir, result, keep_technical,
+        known_suppliers,
     )
 
 
