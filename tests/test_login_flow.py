@@ -74,8 +74,8 @@ def navegador_falso(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "LOGIN_MARKER_PATH", tmp_path / ".conectado")
     monkeypatch.setattr(config, "BROWSER_PROFILE_DIR", tmp_path / "navegador")
     # Espera instantânea: sem isto cada rodada custaria um segundo real.
-    monkeypatch.setattr(browser_client, "LOGIN_POLL_MS", 1)
-    monkeypatch.setattr(browser_client, "LOGIN_TIMEOUT_MS", 5)
+    monkeypatch.setattr(browser_client.session, "LOGIN_POLL_MS", 1)
+    monkeypatch.setattr(browser_client.session, "LOGIN_TIMEOUT_MS", 5)
 
     criados = {}
 
@@ -90,9 +90,9 @@ def navegador_falso(tmp_path, monkeypatch):
             def __exit__(self_inner, *exc):
                 return False
 
-        monkeypatch.setattr(browser_client, "sync_playwright", lambda: _FakePlaywright())
+        monkeypatch.setattr(browser_client.session, "sync_playwright", lambda: _FakePlaywright())
         monkeypatch.setattr(
-            browser_client, "open_browser_context", lambda pw, headless: context
+            browser_client.session, "open_browser_context", lambda pw, headless: context
         )
         return context
 
@@ -158,8 +158,8 @@ def test_janela_que_fecha_na_hora_aponta_outra_copia_do_app(navegador_falso):
 def test_janela_fechada_depois_de_um_tempo_e_tratada_como_desistencia(
     navegador_falso, monkeypatch
 ):
-    monkeypatch.setattr(browser_client, "LOGIN_TIMEOUT_MS", 20)
-    monkeypatch.setattr(browser_client, "_RODADAS_CEDO_DEMAIS", 2)
+    monkeypatch.setattr(browser_client.session, "LOGIN_TIMEOUT_MS", 20)
+    monkeypatch.setattr(browser_client.session, "_ROUNDS_TOO_EARLY", 2)
 
     page = _FakePage(rodadas_ate_a_caixa=None)
     navegador_falso["fabricar"](page)
@@ -217,4 +217,4 @@ def test_o_andamento_diz_em_que_pagina_o_navegador_esta(navegador_falso):
     ],
 )
 def test_descricao_da_pagina_atual(url, esperado):
-    assert browser_client._login_page_description(_FakePage(url=url)) == esperado
+    assert browser_client.session._login_page_description(_FakePage(url=url)) == esperado

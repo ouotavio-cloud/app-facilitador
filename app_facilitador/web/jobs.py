@@ -1,4 +1,4 @@
-"""Execução da varredura em segundo plano, com progresso consultável.
+"""Operações longas rodando em segundo plano, com progresso consultável.
 
 A varredura leva minutos numa caixa grande, então não pode acontecer
 dentro do ciclo de uma requisição HTTP — a tela ficaria pendurada até o
@@ -7,6 +7,14 @@ fim. Aqui ela roda numa thread e a interface consulta o andamento.
 Uma thread (e não asyncio) porque o Playwright que lê o Outlook é
 síncrono: cada thread abre a sua própria instância, sem disputar um laço
 de eventos compartilhado.
+
+São quatro operações, e elas se dividem em duas formas:
+
+- **as que percorrem uma pasta** (varrer, desafixar) — demoradas, com
+  contagem de progresso e botão de parar. Compartilham `_StoppableJob`;
+  o que muda entre elas é só qual função do `scanner` chamar.
+- **as que só vão e voltam** (conectar, ler o calendário) — sem contagem
+  e sem parada, cada uma com o seu estado próprio.
 """
 
 import threading
@@ -16,9 +24,18 @@ from datetime import datetime
 from app_facilitador import scanner
 
 
+def _hora(momento: datetime | None) -> str | None:
+    """Só a hora, que é o que a tela mostra. None continua None."""
+    return momento.strftime("%H:%M:%S") if momento else None
+
+
 @dataclass
 class JobState:
-    """Situação da varredura, do ponto de vista de quem está olhando a tela."""
+    """Situação de uma operação de pasta, do ponto de vista de quem olha a tela.
+
+    Serve tanto à varredura quanto à busca de fixados: as duas percorrem
+    uma pasta contando e-mails e terminam num resumo.
+    """
 
     running: bool = False
     folder: str | None = None
@@ -27,7 +44,7 @@ class JobState:
     finished_at: datetime | None = None
     error: str | None = None
     summary: list[str] = field(default_factory=list)
-    # Sinalizado quando o usuário pediu para parar mas a varredura ainda
+    # Sinalizado quando o usuário pediu para parar mas a operação ainda
     # não chegou ao próximo ponto de parada — deixa a tela dizer "parando…"
     # em vez de parecer travada no clique.
     stopping: bool = False
@@ -37,16 +54,21 @@ class JobState:
             "running": self.running,
             "folder": self.folder,
             "scanned": self.scanned,
-            "started_at": self.started_at.strftime("%H:%M:%S") if self.started_at else None,
-            "finished_at": self.finished_at.strftime("%H:%M:%S") if self.finished_at else None,
+            "started_at": _hora(self.started_at),
+            "finished_at": _hora(self.finished_at),
             "error": self.error,
             "summary": self.summary,
             "stopping": self.stopping,
         }
 
 
-class ScanJob:
-    """Guarda a varredura em andamento e o resultado da última execução."""
+class _StoppableJob:
+    """Percorre uma pasta numa thread, com progresso e parada cooperativa.
+
+    A subclasse diz **o que** rodar (`_operate`); esta classe cuida do
+    resto — thread, trava, estado consultável, sinal de parada e captura
+    do erro para que ele chegue à tela em vez de morrer no console.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -54,45 +76,40 @@ class ScanJob:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
+    def _operate(self, **opcoes):
+        """A operação em si. A subclasse implementa.
+
+        Recebe, além das opções da tela, `on_progress` e `should_stop` —
+        e devolve um resultado com `summary_lines()`.
+        """
+        raise NotImplementedError
+
     @property
     def state(self) -> JobState:
         with self._lock:
             return self._state
 
-    def is_running(self) -> bool:
-        with self._lock:
-            return self._state.running
+    def start(self, **opcoes) -> bool:
+        """Dispara a operação. Devolve False se já houver uma em andamento.
 
-    def start(
-        self,
-        folder: str | None = None,
-        max_messages: int | None = None,
-        download_attachments: bool = True,
-        deep_scan: bool = False,
-        keep_technical: bool = False,
-    ) -> bool:
-        """Dispara a varredura. Devolve False se já houver uma em andamento.
-
-        Recusar em vez de enfileirar é proposital: duas varreduras
+        Recusar em vez de enfileirar é proposital: duas operações
         simultâneas abririam dois navegadores disputando a mesma sessão
         do Outlook.
         """
         with self._lock:
             if self._state.running:
                 return False
-            self._state = JobState(running=True, folder=folder, started_at=datetime.now())
+            self._state = JobState(
+                running=True, folder=opcoes.get("folder"), started_at=datetime.now()
+            )
 
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._run,
-            args=(folder, max_messages, download_attachments, deep_scan, keep_technical),
-            daemon=True,
-        )
+        self._thread = threading.Thread(target=self._run, args=(opcoes,), daemon=True)
         self._thread.start()
         return True
 
     def stop(self) -> None:
-        """Pede para a varredura parar no próximo ponto seguro.
+        """Pede para a operação parar no próximo ponto seguro.
 
         A parada é cooperativa: a thread verifica o sinal entre um bloco de
         e-mails e o próximo, então pode levar alguns segundos até um passo
@@ -104,25 +121,14 @@ class ScanJob:
                 self._state.stopping = True
         self._stop.set()
 
-    def _run(
-        self,
-        folder: str | None,
-        max_messages: int | None,
-        download_attachments: bool,
-        deep_scan: bool,
-        keep_technical: bool,
-    ) -> None:
+    def _run(self, opcoes: dict) -> None:
         try:
-            result = scanner.scan(
-                folder=folder,
-                max_messages=max_messages,
+            resultado = self._operate(
                 on_progress=self._update_progress,
                 should_stop=self._stop.is_set,
-                download_attachments=download_attachments,
-                deep_scan=deep_scan,
-                keep_technical=keep_technical,
+                **opcoes,
             )
-            summary = result.summary_lines()
+            summary = resultado.summary_lines()
             error = None
         except Exception as exc:  # noqa: BLE001 - a falha precisa chegar à tela, não ao console
             summary = []
@@ -140,100 +146,22 @@ class ScanJob:
             self._state.scanned = scanned
 
 
-@dataclass
-class UnpinState:
-    """Situação da busca de e-mails fixados, do ponto de vista da tela."""
+class ScanJob(_StoppableJob):
+    """A varredura: percorre a pasta, identifica propostas e baixa anexos."""
 
-    running: bool = False
-    folder: str | None = None
-    scanned: int = 0
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    error: str | None = None
-    summary: list[str] = field(default_factory=list)
-    stopping: bool = False
-
-    def as_dict(self) -> dict:
-        return {
-            "running": self.running,
-            "folder": self.folder,
-            "scanned": self.scanned,
-            "started_at": self.started_at.strftime("%H:%M:%S") if self.started_at else None,
-            "finished_at": self.finished_at.strftime("%H:%M:%S") if self.finished_at else None,
-            "error": self.error,
-            "summary": self.summary,
-            "stopping": self.stopping,
-        }
+    def _operate(self, **opcoes):
+        return scanner.scan(**opcoes)
 
 
-class UnpinJob:
-    """Guarda a busca de e-mails fixados em andamento e o resultado da última.
+class UnpinJob(_StoppableJob):
+    """A busca de e-mails fixados por engano por uma versão antiga do app.
 
-    Mesma forma do `ScanJob` — thread em segundo plano, progresso
-    consultável, parada cooperativa — porque a operação em si é a mesma
-    coisa por baixo (percorrer uma pasta abrindo e clicando em cada
-    e-mail), só que decidindo desafixar em vez de baixar.
+    Mesma mecânica da varredura — percorrer a pasta abrindo e clicando em
+    cada e-mail —, só que decidindo desafixar em vez de baixar.
     """
 
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._state = UnpinState()
-        self._thread: threading.Thread | None = None
-        self._stop = threading.Event()
-
-    @property
-    def state(self) -> UnpinState:
-        with self._lock:
-            return self._state
-
-    def is_running(self) -> bool:
-        with self._lock:
-            return self._state.running
-
-    def start(self, folder: str | None = None, max_messages: int | None = None) -> bool:
-        """Dispara a busca. Devolve False se já houver uma em andamento."""
-        with self._lock:
-            if self._state.running:
-                return False
-            self._state = UnpinState(running=True, folder=folder, started_at=datetime.now())
-
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._run, args=(folder, max_messages), daemon=True
-        )
-        self._thread.start()
-        return True
-
-    def stop(self) -> None:
-        with self._lock:
-            if self._state.running:
-                self._state.stopping = True
-        self._stop.set()
-
-    def _run(self, folder: str | None, max_messages: int | None) -> None:
-        try:
-            result = scanner.unpin_all(
-                folder=folder,
-                max_messages=max_messages,
-                on_progress=self._update_progress,
-                should_stop=self._stop.is_set,
-            )
-            summary = result.summary_lines()
-            error = None
-        except Exception as exc:  # noqa: BLE001 - a falha precisa chegar à tela
-            summary = []
-            error = str(exc)
-
-        with self._lock:
-            self._state.running = False
-            self._state.stopping = False
-            self._state.finished_at = datetime.now()
-            self._state.summary = summary
-            self._state.error = error
-
-    def _update_progress(self, scanned: int) -> None:
-        with self._lock:
-            self._state.scanned = scanned
+    def _operate(self, **opcoes):
+        return scanner.unpin_all(**opcoes)
 
 
 @dataclass
@@ -333,7 +261,7 @@ class MeetingsState:
         return {
             "running": self.running,
             "error": self.error,
-            "finished_at": self.finished_at.strftime("%H:%M:%S") if self.finished_at else None,
+            "finished_at": _hora(self.finished_at),
         }
 
 

@@ -4,15 +4,12 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Cache local do token de autenticação (nunca deve ser versionado)
-.token_cache.bin
-
-# Sessão salva do navegador (contém cookies de login — nunca versionar)
-.browser_state.json
-
-# Saídas dos scripts de diagnóstico: contêm conteúdo real de e-mails
+# Saídas dos diagnósticos: contêm conteúdo real de e-mails do usuário —
+# nomes de anexo, assunto, remetente, e o HTML do painel de leitura.
+# Nunca versionar.
 debug_*.png
 debug_*.html
+diagnostico-anexo.html
 
 # Estado local do app (banco de dados, propostas baixadas)
 data/

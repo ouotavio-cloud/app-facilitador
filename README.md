@@ -8,7 +8,9 @@ App local para acompanhar propostas de fornecedores e organizar as tarefas do di
 2. Extraia a pasta.
 3. Dê dois cliques em **`AppFacilitador.exe`** dentro dela.
 
-Não precisa instalar Python, nem rodar `pip`, nem baixar navegador: o Chromium que o app usa vem junto. É por isso que o download é grande, e por isso que é um zip e não um `.exe` solto — num arquivo único o Windows teria de descompactar 150 MB a cada abertura.
+Não precisa instalar Python, nem rodar `pip`, nem baixar navegador: o Chromium que o app usa vem junto. É por isso que o download é grande, e por isso que é um zip e não um `.exe` solto — num arquivo único o Windows teria de descompactar o navegador inteiro a cada abertura.
+
+O que vem junto é **um** navegador, e só. O `playwright install` deixa três coisas na pasta (o Chromium, um segundo navegador "headless shell" de ~320 MB e o ffmpeg); o app executa apenas o primeiro, e a compilação embarca apenas ele — ver `AppFacilitador.spec`.
 
 Na primeira vez, o Windows pode mostrar um aviso azul de **SmartScreen** — o programa não tem assinatura digital paga. Clique em **Mais informações** → **Executar assim mesmo**.
 
@@ -77,7 +79,16 @@ Tudo o que o app faz — cada varredura, cada e-mail aberto, cada anexo encontra
 
 A Microsoft Graph API está bloqueada pela política de TI da organização, e o novo Outlook não mantém cache local legível. O app abre o Outlook Web num navegador controlado localmente, usando o mesmo login que você já faz todo dia. As alternativas descartadas estão em `PLANEJAMENTO.md`, seção 2.
 
-A consequência prática: a leitura depende da estrutura da página, que a Microsoft pode alterar sem aviso. Se parar de funcionar, `scripts/browser_inbox_debug.py` salva um screenshot e o HTML real dos itens, que servem para recalibrar os seletores em `app_facilitador/browser_client.py`.
+A consequência prática: a leitura depende da estrutura da página, que a Microsoft pode alterar sem aviso. Se parar de funcionar, `scripts/browser_inbox_debug.py` salva um screenshot e o HTML real dos itens, que servem para recalibrar os seletores em `app_facilitador/browser_client/`.
+
+Esse pacote tem um arquivo por assunto, e é neles que se mexe quando algo quebra:
+
+| Arquivo | Cuida de |
+|---|---|
+| `session.py` | abrir o Chromium, o login, entregar a página pronta |
+| `inbox.py` | a lista: pastas, rolagem, abrir e ler uma mensagem |
+| `downloads.py` | os anexos do e-mail aberto: achar e baixar |
+| `diagnostics.py` | os despejos da página real, para recalibrar seletores |
 
 ---
 
@@ -89,7 +100,7 @@ Para desenvolver ou rodar fora do Windows:
 python -m venv .venv
 .venv\Scripts\activate        # Linux/Mac: source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium
+playwright install --no-shell chromium
 python app.py
 ```
 
@@ -104,13 +115,15 @@ A compilação acontece sozinha no GitHub Actions a cada push (`.github/workflow
 ```bash
 pip install pyinstaller
 set PLAYWRIGHT_BROWSERS_PATH=%CD%\pw-browsers
-playwright install chromium
+playwright install --no-shell chromium
 pyinstaller --clean --noconfirm AppFacilitador.spec
 dist\AppFacilitador\AppFacilitador.exe --verificar
 dist\AppFacilitador\AppFacilitador.exe --verificar-navegador
 ```
 
 O `PLAYWRIGHT_BROWSERS_PATH` é o que faz o Chromium cair dentro do projeto, onde o empacotador consegue incluí-lo. Sem esse passo o app compila, abre o painel e falha só na hora de conectar ao Outlook.
+
+O `--no-shell` é o que evita baixar o "chrome-headless-shell", um segundo navegador de ~320 MB que o app nunca executa — ele só seria usado em modo headless, e `open_browser_context` pede `channel="chromium"` justamente para que também o modo headless use o Chromium comum. Se você já tiver uma pasta `pw-browsers` de antes, apague-a: o `AppFacilitador.spec` ignora o que não for Chromium, mas o download já terá acontecido.
 
 ### Linha de comando
 
@@ -130,4 +143,4 @@ python scripts/browser_list_inbox.py
 pytest -q
 ```
 
-Nenhum teste precisa de navegador ou login: o parsing, o banco, o painel, a escolha do navegador, os caminhos de dados do executável e a varredura com scroll são testados com dados reais capturados da caixa de entrada e com um navegador falso.
+Quase nenhum teste precisa de navegador ou login: o parsing, o banco, o painel, a escolha do navegador, os caminhos de dados do executável e a varredura com scroll são testados com dados reais capturados da caixa de entrada e com um navegador falso. A exceção é `tests/test_find_attachments_dom.py`, que roda o JavaScript de produção num Chromium de verdade — ele se pula sozinho quando não há navegador instalado.

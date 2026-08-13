@@ -35,17 +35,38 @@ from PyInstaller.utils.hooks import collect_all
 playwright_datas, playwright_binaries, playwright_hiddenimports = collect_all("playwright")
 
 # O Chromium só existe aqui depois de:
-#     PLAYWRIGHT_BROWSERS_PATH=./pw-browsers playwright install chromium
+#     PLAYWRIGHT_BROWSERS_PATH=./pw-browsers playwright install --no-shell chromium
 # Sem ele a compilação ainda funciona, mas gera um app que abre o painel e
 # falha ao conectar no Outlook. Avisamos alto em vez de falhar: quem está
-# testando só a interface não precisa baixar 150 MB.
+# testando só a interface não precisa baixar o navegador.
+#
+# **Só as pastas do Chromium entram, uma a uma — nunca `pw-browsers` inteira.**
+# Copiar a pasta toda era o que fazia o download beirar 1 GB: o
+# `playwright install` deixa lá três coisas, e o app usa **uma**.
+#
+#   chromium-<build>/               ~600 MB  usado (aberto e headless, via
+#                                            channel="chromium")
+#   chromium_headless_shell-<build>/ ~320 MB  NUNCA executado
+#   ffmpeg-<build>/                    ~5 MB  só serve para gravar vídeo
+#
+# O `--no-shell` do `playwright install` já evita baixar o headless shell;
+# o filtro aqui é a segunda trava, para que uma pasta `pw-browsers` antiga
+# (de antes do `--no-shell`) não volte a inchar o pacote em silêncio.
 navegador_datas = []
 if os.path.isdir("pw-browsers"):
-    navegador_datas.append(("pw-browsers", "playwright-browsers"))
-else:
+    for item in sorted(os.listdir("pw-browsers")):
+        origem = os.path.join("pw-browsers", item)
+        if not os.path.isdir(origem):
+            continue
+        if not item.startswith("chromium-"):
+            print(f"*** Pulando {item}: o app não executa este binário. ***")
+            continue
+        navegador_datas.append((origem, f"playwright-browsers/{item}"))
+
+if not navegador_datas:
     print(
-        "\n*** AVISO: pw-browsers/ não existe — o app sairá SEM navegador. "
-        "Rode `playwright install chromium` com PLAYWRIGHT_BROWSERS_PATH "
+        "\n*** AVISO: nenhum Chromium em pw-browsers/ — o app sairá SEM navegador. "
+        "Rode `playwright install --no-shell chromium` com PLAYWRIGHT_BROWSERS_PATH "
         "apontando para ./pw-browsers antes de compilar para distribuir. ***\n"
     )
 
