@@ -220,6 +220,67 @@
 
 <section class="cartao">
   <div class="cartao-cabecalho">
+    <h2>Fornecedores <span class="dica">(opcional)</span></h2>
+  </div>
+
+  <p class="dica ressalva">
+    A varredura acha as propostas pelo <strong>código no assunto</strong>. Isso
+    falha quando o fornecedor responde sem repetir o código. Informe aqui os
+    e-mails deles e esses e-mails passam a ser abertos de qualquer jeito, mesmo
+    sem o código — é um segundo caminho, independente do assunto.
+    <br>
+    Vale o <strong>endereço inteiro</strong> (<code>daniel@dhlsaneamento.com.br</code>)
+    ou só o <strong>domínio</strong> (<code>dhlsaneamento.com.br</code>), que cobre a
+    empresa toda mesmo quando quem responde muda. O <strong>nome</strong> é
+    opcional e vira o nome da pasta — útil em e-mail pessoal, onde o domínio não
+    diz nada (<code>molivetto2@gmail.com</code> viraria a pasta "Molivetto2").
+  </p>
+
+  <form method="post" action="{{ url_for('add_supplier') }}" class="linha-form">
+    <label style="flex: 1; min-width: 16rem">
+      E-mail ou domínio
+      <input type="text" name="contato" placeholder="dhlsaneamento.com.br" required>
+    </label>
+    <label style="flex: 1; min-width: 12rem">
+      Nome da pasta (opcional)
+      <input type="text" name="nome" placeholder="DHL Saneamento">
+    </label>
+    <button type="submit">Adicionar</button>
+  </form>
+
+  {% if suppliers %}
+  <div class="rolagem-lateral">
+    <table>
+      <thead>
+        <tr><th>E-mail ou domínio</th><th>Nome da pasta</th><th class="numero">E-mails</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for f in suppliers %}
+        <tr>
+          <td><code>{{ f.match }}</code></td>
+          <td>{{ f.name or '—' }}</td>
+          <td class="numero">{{ f.message_count }}</td>
+          <td class="encolher">
+            <form method="post" action="{{ url_for('remove_supplier') }}">
+              <input type="hidden" name="contato" value="{{ f.match }}">
+              <button type="submit" class="botao-texto botao-texto-perigo" title="Remover">remover</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="vazio">
+    Nenhum fornecedor cadastrado — e a varredura funciona sem isso. Cadastre
+    quando um fornecedor mandar proposta e o app não achar.
+  </p>
+  {% endif %}
+</section>
+
+<section class="cartao">
+  <div class="cartao-cabecalho">
     <h2>Propostas identificadas</h2>
   </div>
 

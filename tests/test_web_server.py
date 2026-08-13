@@ -331,6 +331,40 @@ def test_scan_form_passes_the_download_toggle(client, monkeypatch):
     assert args["download_attachments"] is True
 
 
+def test_supplier_appears_on_the_page(client):
+    client.post(
+        "/fornecedores", data={"contato": "@DHLsaneamento.com.br", "nome": "DHL Saneamento"}
+    )
+
+    page = _page(client)
+
+    assert "dhlsaneamento.com.br" in page  # normalizado
+    assert "DHL Saneamento" in page
+
+
+def test_supplier_can_be_removed(client):
+    client.post("/fornecedores", data={"contato": "dhlsaneamento.com.br"})
+    client.post("/fornecedores/remover", data={"contato": "dhlsaneamento.com.br"})
+
+    with storage.connect(config.DB_PATH) as connection:
+        assert storage.list_suppliers(connection) == []
+
+
+def test_empty_supplier_is_not_registered(client):
+    client.post("/fornecedores", data={"contato": "  ", "nome": "Vazio"})
+
+    with storage.connect(config.DB_PATH) as connection:
+        assert storage.list_suppliers(connection) == []
+
+
+def test_supplier_section_says_it_is_optional(client):
+    """Quem não precisa não pode achar que precisa preencher."""
+    page = _page(client)
+
+    assert "Fornecedores" in page
+    assert "opcional" in page
+
+
 def test_unpin_status_endpoint_reports_idle_state(client):
     status = client.get("/desafixar/status").get_json()
 

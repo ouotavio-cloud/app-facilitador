@@ -74,6 +74,7 @@ def create_app() -> Flask:
                 connection, folder=selected_folder, limit=25
             )
             proposals = storage.list_messages_with_codes(connection)
+            suppliers = storage.list_suppliers(connection)
             scanned_folders = storage.list_scanned_folders(connection)
             total_messages = storage.count_messages(connection)
             arquivos = storage.attachments_by_conversation(connection)
@@ -89,6 +90,7 @@ def create_app() -> Flask:
             processes=processes,
             recent=recent,
             proposals=proposals,
+            suppliers=suppliers,
             scanned_folders=scanned_folders,
             selected_folder=selected_folder or "",
             total_messages=total_messages,
@@ -163,6 +165,32 @@ def create_app() -> Flask:
     def remove_process(code: str):
         with storage.connect() as connection:
             storage.remove_process(connection, code)
+        return redirect(url_for("index"))
+
+    @app.post("/fornecedores")
+    def add_supplier():
+        """Cadastra um fornecedor por e-mail ou domínio.
+
+        Opcional: a varredura funciona sem isso, casando pelo código no
+        assunto. O cadastro serve para os dois casos em que o código não
+        basta — o fornecedor que responde sem repetê-lo, e o e-mail pessoal
+        (gmail) de que não dá para deduzir o nome da empresa.
+        """
+        contato = (request.form.get("contato") or "").strip()
+        nome = (request.form.get("nome") or "").strip() or None
+        if contato:
+            with storage.connect() as connection:
+                storage.add_supplier(connection, contato, nome)
+        return redirect(url_for("index"))
+
+    @app.post("/fornecedores/remover")
+    def remove_supplier():
+        # O identificador vai no corpo, e não na URL: e-mail tem "@" e "."
+        # e viraria uma rota ilegível e sujeita a escape errado.
+        contato = (request.form.get("contato") or "").strip()
+        if contato:
+            with storage.connect() as connection:
+                storage.remove_supplier(connection, contato)
         return redirect(url_for("index"))
 
     @app.post("/varredura")

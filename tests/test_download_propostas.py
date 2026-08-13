@@ -163,6 +163,150 @@ def test_registra_o_fornecedor_junto_do_arquivo(outlook):
     assert anexos[0]["sender_email"] == "c@aciotubos.com.br"
 
 
+def test_baixa_mesmo_sem_o_flag_de_anexo_na_lista(outlook, tmp_path):
+    """O caso real: resposta de fornecedor a CARTA CONVITE sem o flag na linha.
+
+    O flag "Tem anexos" sai do rótulo da linha, que o Outlook nem sempre
+    monta. No banco do usuário ele barrava 11 dos 18 e-mails que casaram com
+    processo cadastrado — todos propostas de verdade. Quem sabe se há anexo é
+    o painel aberto, não a lista.
+    """
+    _cadastrar("SUP.2026-185", "661")
+    outlook["mensagens"] = [
+        _mensagem(
+            "c1",
+            "RES: SUP.2026-185 | CARTA CONVITE | 661-TAIAÇUPEBA | TUBOS EM FERRO FUNDIDO",
+            email="daniel@dhlsaneamento.com.br",
+            anexo=False,  # a lista não avisou
+        )
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["PROPOSTA DHL - ENGEFORM.pdf"]})
+
+    resultado = scanner.scan()
+
+    assert outlook["pagina"].abertas == ["c1"]
+    assert resultado.downloaded == 1
+    assert (
+        tmp_path / "Propostas" / "661" / "SUP.2026-185" / "Dhlsaneamento"
+    ).is_dir()
+
+
+def test_sem_anexo_de_verdade_o_email_casado_nao_vira_erro(outlook):
+    """Abrir e não achar proposta é o filtro funcionando, não uma falha."""
+    _cadastrar("SUP.2026-185")
+    outlook["mensagens"] = [
+        _mensagem("c1", "RES: SUP.2026-185 | CARTA CONVITE", anexo=False)
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": []})
+
+    resultado = scanner.scan()
+
+    assert outlook["pagina"].abertas == ["c1"]
+    assert resultado.downloaded == 0
+    assert resultado.download_failures == 0
+    assert resultado.errors == []
+
+
+def test_varredura_profunda_ainda_exige_o_flag_de_anexo(outlook):
+    """Sem código casado, o flag é a única pista — sem ele a profunda abriria tudo.
+
+    Abrir marca como lido no Outlook do usuário: o afrouxamento vale para o
+    e-mail que já casou por código, não para a caixa inteira.
+    """
+    _cadastrar("SUP.2026-197")
+    outlook["mensagens"] = [
+        _mensagem("c1", "Assunto sem código nenhum", anexo=False),
+        _mensagem("c2", "Outro assunto sem código", anexo=True),
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["x.pdf"], "c2": ["y.pdf"]})
+
+    scanner.scan(deep_scan=True)
+
+    assert outlook["pagina"].abertas == ["c2"]
+
+
+def _cadastrar_fornecedor(contato, nome=None):
+    with storage.connect(config.DB_PATH) as conexao:
+        storage.add_supplier(conexao, contato, nome)
+
+
+def test_fornecedor_cadastrado_e_aberto_mesmo_sem_codigo_no_assunto(outlook, tmp_path):
+    """O caso da DHL: proposta que a varredura por assunto não tinha como achar.
+
+    O fornecedor respondeu na thread e o assunto que sobrou na lista não
+    traz o código. Sem o cadastro não há o que casar; com ele, o e-mail é
+    aberto, o corpo revela o processo e a proposta é arquivada.
+    """
+    _cadastrar("SUP.2026-185", "661")
+    _cadastrar_fornecedor("dhlsaneamento.com.br", "DHL Saneamento")
+    outlook["mensagens"] = [
+        _mensagem("c1", "Re: Carta convite", email="daniel@dhlsaneamento.com.br",
+                  anexo=False)
+    ]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["PROPOSTA DHL - ENGEFORM.pdf"]},
+        corpo_por_conversa={"c1": "Conforme solicitado segue proposta da SUP.2026-185"},
+    )
+
+    resultado = scanner.scan()
+
+    assert outlook["pagina"].abertas == ["c1"]
+    assert resultado.opened_by_supplier == 1
+    assert resultado.downloaded == 1
+    # E a pasta usa o nome cadastrado, não o palpite do domínio.
+    assert (
+        tmp_path / "Propostas" / "661" / "SUP.2026-185" / "DHL Saneamento"
+    ).is_dir()
+
+
+def test_fornecedor_cadastrado_com_email_pessoal_nomeia_a_pasta(outlook, tmp_path):
+    """`molivetto2@gmail.com` virava a pasta "Molivetto2"."""
+    _cadastrar("SUP.2026-185", "661")
+    _cadastrar_fornecedor("molivetto2@gmail.com", "Molivetto Tubos")
+    outlook["mensagens"] = [
+        _mensagem("c1", "RES: SUP.2026-185 | CARTA CONVITE",
+                  remetente="Marcio", email="molivetto2@gmail.com")
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Proposta Comercial 2026.pdf"]})
+
+    scanner.scan()
+
+    assert (
+        tmp_path / "Propostas" / "661" / "SUP.2026-185" / "Molivetto Tubos"
+    ).is_dir()
+
+
+def test_sem_fornecedor_cadastrado_nada_muda(outlook):
+    """A tabela vazia é o padrão — quem não usa não pode notar diferença."""
+    outlook["mensagens"] = [
+        _mensagem("c1", "Assunto sem código", email="daniel@dhlsaneamento.com.br")
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Proposta.pdf"]})
+
+    resultado = scanner.scan()
+
+    assert outlook["pagina"].abertas == []
+    assert resultado.opened_by_supplier == 0
+
+
+def test_fornecedor_cadastrado_sem_processo_no_corpo_nao_arquiva(outlook, tmp_path):
+    """Abrir é barato; arquivar sem saber o processo criaria lixo."""
+    _cadastrar("SUP.2026-185", "661")
+    _cadastrar_fornecedor("dhlsaneamento.com.br")
+    outlook["mensagens"] = [
+        _mensagem("c1", "Bom dia", email="daniel@dhlsaneamento.com.br")
+    ]
+    outlook["pagina"] = _PaginaFalsa(
+        {"c1": ["Catalogo.pdf"]}, corpo_por_conversa={"c1": "Segue nosso catálogo."}
+    )
+
+    resultado = scanner.scan()
+
+    assert outlook["pagina"].abertas == ["c1"]
+    assert resultado.downloaded == 0
+    assert not (tmp_path / "Propostas" / "661").exists()
+
+
 def test_email_sem_processo_cadastrado_nao_e_aberto(outlook):
     """Abrir marca como lido: não dá para fazer isso com a caixa inteira."""
     outlook["mensagens"] = [_mensagem("c1", "Newsletter qualquer")]

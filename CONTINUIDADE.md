@@ -116,6 +116,54 @@ o usuário resolver à mão. Se a busca voltar com muita coisa em
 pulou) e, se precisar, uma captura de uma linha fixada para calibrar
 igual foi feito com os anexos.
 
+## v14: por que propostas não eram achadas (duas causas) e o cadastro de fornecedores
+
+O usuário mandou prints de duas propostas que o app não achou — molivetto2
+(28/07) e daniel@dhlsaneamento (22/07), ambas respondendo à CARTA CONVITE da
+SUP.2026-185, com o código **no assunto**. Cruzando com o banco real:
+
+**Causa 1 — o flag "Tem anexos" barrava 61% dos e-mails casados.** Dos 18
+e-mails que casaram com processo cadastrado, **11** morriam em
+`if not has_attachments: continue` — todos respostas de fornecedor a carta
+convite. O flag sai do rótulo da linha, e o Outlook simplesmente não o põe em
+várias delas (conferido no HTML real: `Emanuel Moraes Raszl RE: CARTA CONVITE |
+SUP.2026-197 …` não tem "Tem anexos", e é um dos 11). Pior, o parser tinha dois
+defeitos no mesmo lugar: sem `sender_name` o prefixo saía vazio e a flag era
+**impossível** (235 dos 1115 e-mails), e com `sender_name` ausente do rótulo o
+`split` devolvia o rótulo inteiro e qualquer "Fixado" do assunto virava flag.
+
+Corrigido: o flag perdeu o poder de veto sobre o sinal forte (código no
+assunto) — quem decide se há anexo é o painel aberto. Ele continua valendo
+para a varredura **profunda**, onde é a única pista e sem ele a caixa inteira
+seria aberta. E `inbox_parser._leading_flags` lê as marcas ancoradas no começo
+do rótulo, sem depender do remetente.
+
+**Causa 2 — a lista é por CONVERSA e só a última mensagem abre.** Para a
+SUP.2026-185 existem **2 linhas** no banco (Angolini 07/08, Emanuel 05/08),
+embora pelo menos 4 fornecedores tenham respondido. `dhlsaneamento` aparece
+**0 vezes** em 1115 e-mails. As propostas estão *dentro* das threads: o painel
+de leitura mostra 1 `[role="document"]` (conferido no dump), então os anexos
+das mensagens anteriores nem chegam ao DOM.
+
+**Isto ainda NÃO está resolvido.** Alcançar as mensagens recolhidas exige
+clicar num cabeçalho de mensagem cuja estrutura eu nunca vi — e adivinhar
+acionador foi o que fez o app fixar e-mail (ver v13). `dump_message_debug`
+agora salva um **RELATÓRIO DA CONVERSA** (`corpos_de_mensagem_no_painel`,
+`candidatos_a_expandir` com `aria-expanded` e rótulo). Peça o
+`diagnostico-anexo.html` novo e calibre com ele, como foi feito com os anexos.
+
+**Mitigação que já vale: cadastro de fornecedores (opcional).** Tabela
+`suppliers` (`match` = e-mail inteiro ou domínio, `name` opcional) e uma seção
+no painel. Dá um **segundo critério, independente do assunto**: e-mail de
+fornecedor cadastrado é aberto mesmo sem código casado, cai no caminho da
+varredura profunda, e o corpo revela o processo. É como a proposta da DHL
+passa a ser achada sem depender de expandir a thread. De quebra resolve o
+pedido antigo de "apelido de fornecedor": `name` vira o nome da pasta, o que
+conserta o e-mail pessoal (`molivetto2@gmail.com` virava pasta "Molivetto2").
+Precedência ao nomear: nome do arquivo (convenção PT/PC) > cadastro > domínio.
+
+Vazio por padrão — quem não cadastrar nada não vê diferença nenhuma.
+
 ## Download falhando — pista do cache do usuário (v12)
 
 O usuário mandou o banco real: **21 anexos falharam** ("não foi possível

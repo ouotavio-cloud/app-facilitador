@@ -179,19 +179,74 @@ def supplier_from_filename(filename: str) -> str | None:
     return None
 
 
-def supplier_for(
-    sender_name: str | None, sender_email: str | None, filename: str | None = None
-) -> str:
-    """Fornecedor de um anexo: do nome do arquivo se der, senão do domínio.
+def registered_supplier(
+    sender_email: str | None, known_suppliers: dict[str, str | None] | None
+) -> str | None:
+    """Nome cadastrado para o remetente, se o usuário informou um.
 
-    O nome do arquivo vence porque é mais específico — num e-mail com
-    propostas de três fornecedores, o domínio do remetente é o mesmo para
-    todos, mas o nome de cada arquivo diz de quem ele é.
+    Procura o endereço inteiro antes do domínio: cadastrar
+    `daniel@dhlsaneamento.com.br` com um nome e `dhlsaneamento.com.br` com
+    outro é uma forma legítima de tratar uma exceção dentro da empresa, e o
+    mais específico tem que ganhar.
+
+    Devolve None quando não há cadastro, ou quando há mas sem nome — nesse
+    caso o cadastro serve só para reconhecer o fornecedor na varredura, e o
+    nome da pasta continua saindo da heurística.
+    """
+    if not known_suppliers or not sender_email or "@" not in sender_email:
+        return None
+
+    endereco = sender_email.strip().lower()
+    dominio = endereco.rsplit("@", 1)[1]
+
+    for chave in (endereco, dominio):
+        if chave in known_suppliers:
+            nome = known_suppliers[chave]
+            if nome:
+                return sanitize(nome, fallback="Fornecedor")
+    return None
+
+
+def is_registered_supplier(
+    sender_email: str | None, known_suppliers: dict[str, str | None] | None
+) -> bool:
+    """True quando o remetente está no cadastro de fornecedores.
+
+    É o segundo critério da varredura: um e-mail que o usuário declarou vir
+    de fornecedor merece ser aberto mesmo sem o código no assunto.
+    """
+    if not known_suppliers or not sender_email or "@" not in sender_email:
+        return False
+
+    endereco = sender_email.strip().lower()
+    return endereco in known_suppliers or endereco.rsplit("@", 1)[1] in known_suppliers
+
+
+def supplier_for(
+    sender_name: str | None,
+    sender_email: str | None,
+    filename: str | None = None,
+    known_suppliers: dict[str, str | None] | None = None,
+) -> str:
+    """Fornecedor de um anexo, da pista mais específica para a mais genérica.
+
+    1. **O nome do arquivo**, quando segue a convenção "... - PT - FORNECEDOR
+       - R00": num e-mail com propostas de três empresas, o remetente é o
+       mesmo para todas e só o arquivo diz de quem é cada uma.
+    2. **O cadastro do usuário**, que é declaração e não palpite — e é a
+       única saída quando o e-mail é pessoal (`molivetto2@gmail.com` virava
+       a pasta "Molivetto2").
+    3. **O domínio**, a heurística de sempre.
     """
     if filename:
         do_arquivo = supplier_from_filename(filename)
         if do_arquivo:
             return do_arquivo
+
+    cadastrado = registered_supplier(sender_email, known_suppliers)
+    if cadastrado:
+        return cadastrado
+
     return supplier_folder(sender_name, sender_email)
 
 
@@ -200,6 +255,7 @@ def select_proposals(
     sender_name: str | None,
     sender_email: str | None,
     keep_technical: bool = False,
+    known_suppliers: dict[str, str | None] | None = None,
 ) -> list[dict]:
     """Decide, para os anexos de um e-mail, quais baixar e de quem são.
 
@@ -212,7 +268,7 @@ def select_proposals(
     itens = [
         {
             "filename": nome,
-            "supplier": supplier_for(sender_name, sender_email, nome),
+            "supplier": supplier_for(sender_name, sender_email, nome, known_suppliers),
             "tipo": classify_proposal(nome),
         }
         for nome in filenames
