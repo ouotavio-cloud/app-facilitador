@@ -52,9 +52,6 @@ class ScanResult:
     # E-mails abertos porque o remetente está no cadastro de fornecedores,
     # sem o código ter casado pelo assunto. Mede o que o cadastro alcançou.
     opened_by_supplier: int = 0
-    # Pastas vazias levadas embora no fim da varredura — sobras das versões
-    # que criavam a árvore da proposta antes de saber se o download daria certo.
-    empty_dirs_removed: int = 0
     # Caminho de um HTML do painel de leitura salvo quando um download
     # falha — é o que permite calibrar os seletores sem outra compilação.
     debug_dump: str | None = None
@@ -88,11 +85,6 @@ class ScanResult:
             lines.append(
                 f"E-mails pulados por não serem proposta (nota/contrato/habilitação): "
                 f"{self.skipped_non_proposal}"
-            )
-        if self.empty_dirs_removed:
-            lines.append(
-                f"Pastas vazias removidas (sobra de downloads que falharam): "
-                f"{self.empty_dirs_removed}"
             )
         if self.download_failures:
             lines.append(f"Anexos que não deu para baixar: {self.download_failures}")
@@ -274,11 +266,6 @@ def scan(
                     result.errors.append(
                         f"anexo de {message.get('subject', '(sem assunto)')}: {error}"
                     )
-
-        # Varre a pasta de propostas no fim para levar embora as árvores
-        # vazias deixadas pelas versões anteriores do app, que criavam a
-        # pasta antes de o download dar certo.
-        result.empty_dirs_removed = attachments.remove_empty_dirs(pasta_propostas)
 
     _log.info(
         "varredura concluída — %d e-mails, %d baixados, %d falhas%s",

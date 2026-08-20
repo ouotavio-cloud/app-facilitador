@@ -511,6 +511,30 @@ contar (a revisão da semana seguinte não pode reiniciar em R01).
 existir: quem não configura não nota diferença nenhuma, e os 360 testes
 que já existiam antes desta versão passam sem tocar em nada.
 
+## v19: tira a faxina automática de pasta vazia
+
+A v18 (acima) reusava, sem questionar, a `remove_empty_dirs` que a v13 tinha
+criado — rodava no fim de toda varredura, sempre em `pasta_propostas`
+(nunca na árvore do OneDrive), e só apagava pasta **vazia**, nunca arquivo.
+O usuário perguntou se a mudança do OneDrive tinha risco de apagar pasta e,
+mesmo depois de eu confirmar que essa faxina nem tocava na árvore nova, foi
+categórico: apagar pasta — vazia ou não — não pode existir no app, ponto.
+
+Saiu inteira: a função `attachments.remove_empty_dirs`, a chamada dela no
+fim de `scanner.scan()`, o campo `ScanResult.empty_dirs_removed` e a linha
+correspondente no resumo. A justificativa original (sobra de pasta vazia
+quando o download falhava, de quando a pasta nascia *antes* do download)
+já estava obsoleta desde a v13: hoje `download_attachment` só cria a pasta
+depois que o download já começou de verdade (`downloads.py`), então um
+download que falha não deixa pasta para trás — não há mais o que a faxina
+precisasse limpar em uso normal. Ela só faria falta para lixo de versões
+anteriores a v13, e o usuário preferiu não ter esse comportamento automático
+de jeito nenhum a cobrir esse caso raro.
+
+Teste novo (`test_varredura_nunca_apaga_pasta_vazia_preexistente`) trava o
+oposto do que a v13 testava: uma pasta vazia dentro de `pasta_propostas`
+sobrevive a uma varredura inteira.
+
 ## Mapa do código
 
 ```

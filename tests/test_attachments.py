@@ -388,43 +388,6 @@ class TestDocumentoDoComprador:
         assert not attachments.is_probably_not_proposal(assunto)
 
 
-class TestPastasVazias:
-    """Faxina das árvores que sobraram de quando a pasta nascia antes do
-    download — o usuário abria `Propostas` e via a estrutura montada, sem
-    um arquivo dentro."""
-
-    def test_leva_a_arvore_vazia_inteira(self, tmp_path):
-        (tmp_path / "661" / "SUP.2026-186" / "Engeform").mkdir(parents=True)
-
-        removidas = attachments.remove_empty_dirs(tmp_path)
-
-        assert removidas == 3
-        assert not (tmp_path / "661").exists()
-
-    def test_preserva_o_ramo_que_tem_proposta(self, tmp_path):
-        cheia = tmp_path / "661" / "SUP.2026-186" / "Angolini"
-        cheia.mkdir(parents=True)
-        (cheia / "Angolini - Proposta.pdf").write_text("proposta")
-        (tmp_path / "661" / "SUP.2026-186" / "Engeform").mkdir()
-
-        removidas = attachments.remove_empty_dirs(tmp_path)
-
-        assert removidas == 1
-        assert (cheia / "Angolini - Proposta.pdf").read_text() == "proposta"
-        assert not (tmp_path / "661" / "SUP.2026-186" / "Engeform").exists()
-
-    def test_nao_apaga_a_pasta_escolhida_pelo_usuario(self, tmp_path):
-        """`Propostas` é a pasta que o painel abre; ela fica, mesmo vazia."""
-        base = tmp_path / "Propostas"
-        base.mkdir()
-
-        assert attachments.remove_empty_dirs(base) == 0
-        assert base.is_dir()
-
-    def test_pasta_inexistente_nao_quebra(self, tmp_path):
-        assert attachments.remove_empty_dirs(tmp_path / "nao-existe") == 0
-
-
 class TestNomeDeArquivoParaOOneDrive:
     """Convenção da árvore real do OneDrive: processo + data + fornecedor + revisão.
 
