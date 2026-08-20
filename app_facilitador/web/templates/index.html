@@ -139,10 +139,15 @@
 
     <form method="post" action="{{ url_for('add_process') }}" class="linha-form">
       <label>Código <input type="text" name="codigo" placeholder="SUP.2026-197" required></label>
-      <label>Obra <input type="text" name="obra" placeholder="Sabesp Lote 4"></label>
+      <label>Nº da obra <input type="text" name="obra" placeholder="659" required></label>
       <label>Prazo <input type="text" name="prazo" placeholder="31/12/2026" style="width: 8rem"></label>
       <button type="submit">Adicionar</button>
     </form>
+    <p class="dica ressalva">
+      O número da obra (ex. <code>659</code>) é o que aparece no nome da
+      pasta dela no OneDrive — é ele que casa o processo com a pasta real,
+      quando a pasta das obras está configurada mais abaixo.
+    </p>
 
     {% if processes %}
     <div class="rolagem-lateral">
@@ -176,7 +181,7 @@
     {% else %}
     <p class="vazio">
       Nenhum processo cadastrado. Informe os códigos das cotações que você
-      enviou — a busca procura cada um pelo código <em>e</em> pelo nome da obra.
+      enviou — a busca procura cada um pelo código <em>e</em> pelo número da obra.
     </p>
     {% endif %}
   </section>
@@ -292,6 +297,23 @@
     <button type="submit" class="botao-secundario">Salvar pasta</button>
   </form>
 
+  <form method="post" action="{{ url_for('set_obras_dir') }}" class="linha-form">
+    <label style="flex: 1; min-width: 20rem">
+      Pasta das obras no OneDrive (opcional)
+      <input type="text" name="pasta" value="{{ pasta_obras }}"
+             placeholder="...\OneDrive - engeform\Suprimentos - Documentos\__14. OBRAS">
+    </label>
+    <button type="submit" class="botao-secundario">Salvar pasta</button>
+  </form>
+  <p class="dica ressalva">
+    Configurada, a proposta é arquivada dentro da <strong>obra</strong> e do
+    <strong>RFQ</strong> já existentes ali (<code>04. RFQs / SUP.AAAA-NNN.../
+    3. PROPOSTAS TÉCNICA E COMERCIAL / Fornecedor</code>), casando a obra pelo
+    <strong>número</strong> cadastrado no processo. Sem essa pasta configurada,
+    ou sem achar a obra ou o RFQ dentro dela, a proposta cai na pasta acima,
+    como hoje.
+  </p>
+
   {% if proposals %}
   <div class="rolagem-lateral">
     <table>
@@ -310,6 +332,7 @@
               <span class="selo selo-atencao">não cadastrado</span>
               <form method="post" action="{{ url_for('add_process') }}">
                 <input type="hidden" name="codigo" value="{{ code }}">
+                <input type="text" name="obra" placeholder="Nº da obra" required style="width: 6rem">
                 <button type="submit" class="botao-texto">cadastrar</button>
               </form>
               {% else %}

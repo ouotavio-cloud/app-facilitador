@@ -53,6 +53,14 @@ A **pasta é a fonte da verdade**: antes de baixar, o app confere se a proposta 
 
 Duas coisas a saber: para pegar o anexo o app precisa **abrir o e-mail**, o que o marca como lido no Outlook — por isso só e-mails de processos cadastrados são abertos, nunca a caixa inteira. E a pasta de destino é editável no painel; o padrão é `Documentos\App Facilitador\Propostas`, que em máquina corporativa costuma estar sincronizada com o OneDrive.
 
+**Arquivando direto na pasta real das obras.** Se sua empresa já mantém uma estrutura própria por obra no OneDrive (`__14. OBRAS / <obra> / 04. RFQs / <SUP.AAAA-NNN> / 3. PROPOSTAS TÉCNICA E COMERCIAL / <fornecedor>`), informe essa pasta raiz no painel, em **"Pasta das obras no OneDrive"**. Com ela configurada:
+
+- o cadastro de processo passa a **exigir o número da obra** (o que aparece no nome da pasta dela, ex. `659`) — é ele que casa o processo com a pasta certa;
+- achando a obra e o RFQ dentro dela, a proposta vai para a pasta do fornecedor que já existe ali (ou uma nova, se o fornecedor não tinha sido convidado), nomeada como `Processo - Data - Fornecedor - Rnn.ext`;
+- não achando a obra ou o RFQ (processo cadastrado com o número errado, ou pasta ainda não criada), a proposta cai na pasta escolhida acima, como sempre.
+
+Sem essa pasta configurada (o padrão), nada muda: tudo segue indo para `Obra / Processo / Fornecedor` como sempre foi.
+
 **Reuniões de hoje** — lê os compromissos do calendário. Clique em *atualizar* para consultar; o resultado fica em cache para o painel abrir rápido. Se o cache for de outro dia, o app avisa em vez de mostrar reuniões de ontem como se fossem de hoje.
 
 **E-mails recentes** — os últimos e-mails registrados, filtráveis por pasta.
