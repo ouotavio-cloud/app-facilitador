@@ -454,6 +454,63 @@ entrado — a quebra aparecia quando já não havia o que revisar. Agora há
 gatilho de `pull_request` que compila e verifica sem publicar release (a
 publicação ficou condicionada a `github.event_name == 'push'`).
 
+## v18: arquivar na árvore real de obras do OneDrive, não só na própria
+
+O usuário mostrou, em prints, a estrutura que o time já mantém à mão no
+OneDrive, muito antes deste app existir:
+
+```
+__14. OBRAS / <NN.NNN - NNN NOME DA OBRA> / 04. RFQs /
+    <SUP.AAAA-NNN - ASSUNTO> / 3. PROPOSTAS TÉCNICA E COMERCIAL /
+        <FORNECEDOR> / arquivo
+```
+
+Cada RFQ já nasce com uma pasta por fornecedor convidado (CABELAUTO,
+COPERCABOS...), criada à mão ao montar o convite. Pediu para o app
+arquivar ali, e não (só) na árvore própria `Obra/Processo/Fornecedor` sob
+`pasta_propostas` que o app já tinha.
+
+**Decisões, tiradas com o usuário (não adivinhadas):**
+
+- O campo **"obra"** do cadastro de processo — que já existia, e que os
+  testes reais já usavam com números ("661", "657") — passa a ser
+  **obrigatório**, e é o **número da obra** (ex. "659") que aparece no
+  nome da pasta dela. É esse número que casa o processo com a pasta real;
+  não é preciso campo novo. Validação em `web/server.py::add_process`, e
+  o atalho "cadastrar" para código visto no e-mail (antes só um botão)
+  ganhou o mesmo campo.
+- Fornecedor **sem** pasta convidada: cria uma pasta nova, mesmo
+  comportamento de sempre — só que agora casando por nome primeiro
+  (ignorando acento/caixa) para não duplicar "Cabelauto" ao lado de
+  "CABELAUTO" já existente.
+- Não achando a obra ou o RFQ dentro da árvore do OneDrive (processo
+  cadastrado com número errado, ou RFQ ainda não criado pelo time): cai
+  de volta na árvore própria do app — nunca perde a proposta, nunca
+  inventa pasta de obra/RFQ na estrutura da empresa.
+
+**Novo módulo `obra_folders.py`** (puro, só `Path`, sem navegador): acha a
+pasta da obra pelo número (bordas de regex que excluem dígito **e**
+ponto, para "659" não casar dentro de "6590" nem do "25.659" de um
+registro sequencial), a pasta do RFQ por prefixo do código dentro de
+"04. RFQs", e a pasta do fornecedor dentro de "3. PROPOSTAS..." — as duas
+últimas achadas por **palavra-chave normalizada** no nome
+("rfq"/"proposta"+"tecnica"+"comercial"), não pelo texto exato, porque o
+número que prefixa cada uma ("04.", "3.") é detalhe que varia.
+
+**Nome do arquivo muda só nessa árvore.** A árvore própria do app continua
+prefixando o fornecedor e mantendo o nome original do anexo
+(`Aciotubos - Orçamento.pdf`). Na árvore do OneDrive o usuário pediu outra
+convenção — `processo - data - fornecedor - Rnn` — para o arquivo se
+identificar sozinho na pasta do fornecedor sem depender do nome que o
+fornecedor deu ao PDF. `Rnn` conta quantas propostas desse fornecedor já
+existem **para este processo** na pasta, ignorando a data no nome ao
+contar (a revisão da semana seguinte não pode reiniciar em R01).
+
+**Pasta raiz configurável no painel** (`config.OBRAS_DIR_SETTING`,
+`scanner.obras_dir`), em branco por padrão — desligada, é o recurso não
+existir: quem não configura não nota diferença nenhuma, e os 360 testes
+que já existiam antes desta versão passam sem tocar em nada.
+
 ## Mapa do código
 
 ```
@@ -469,6 +526,7 @@ app_facilitador/
   inbox_parser.py           parsing puro da lista de e-mails
   proposal_detector.py      casa o texto com os processos cadastrados
   attachments.py            decide pasta e nome de cada proposta (puro)
+  obra_folders.py           acha obra/RFQ/fornecedor na árvore real do OneDrive (puro)
   deadlines.py              semáforo de prazo, dias corridos
   calendar_client.py        reuniões do dia
   storage.py                SQLite: mensagens, códigos, processos, anexos, settings

@@ -7,10 +7,11 @@ resumo do que foi encontrado (PLANEJAMENTO.md, Fase 4).
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from app_facilitador import attachments, browser_client, config, inbox_parser
-from app_facilitador import logs, pdf_text, proposal_detector, storage
+from app_facilitador import logs, obra_folders, pdf_text, proposal_detector, storage
 
 _log = logs.get_logger("scanner")
 
@@ -179,6 +180,9 @@ def scan(
         # não conta como baixada e a varredura a traz de volta.
         ja_baixados = storage.downloaded_conversations_on_disk(connection)
         pasta_propostas = proposals_dir(connection)
+        # Raiz das obras no OneDrive, se configurada (ver `obra_folders.py`).
+        # None desliga o recurso e mantém o comportamento de sempre.
+        obras_base = obras_dir(connection)
         # Carregado uma vez: é consultado a cada e-mail percorrido.
         fornecedores = storage.supplier_registry(connection)
 
@@ -245,6 +249,7 @@ def scan(
                         _download_proposal(
                             page, connection, message, matches, processes,
                             pasta_propostas, result, keep_technical, fornecedores,
+                            obras_base,
                         )
                     elif not matches and (
                         de_fornecedor
@@ -262,6 +267,7 @@ def scan(
                         _deep_scan_message(
                             page, connection, message, processes,
                             pasta_propostas, result, keep_technical, fornecedores,
+                            obras_base,
                         )
                 except Exception as error:  # noqa: BLE001 - idem: não derruba a varredura
                     _log.exception("erro ao processar anexo de %r", message.get("subject"))
@@ -286,6 +292,16 @@ def proposals_dir(connection) -> Path:
     """Pasta escolhida pelo usuário para arquivar as propostas."""
     escolhida = storage.get_setting(connection, config.PROPOSALS_DIR_SETTING)
     return Path(escolhida) if escolhida else config.DEFAULT_PROPOSALS_DIR
+
+
+def obras_dir(connection) -> Path | None:
+    """Pasta raiz das obras no OneDrive, se o usuário configurou uma.
+
+    None (o padrão) desliga o recurso: a varredura arquiva só na árvore
+    própria do app (`proposals_dir`) — ver `obra_folders.py`.
+    """
+    escolhida = storage.get_setting(connection, config.OBRAS_DIR_SETTING)
+    return Path(escolhida) if escolhida else None
 
 
 def _process_message(
@@ -335,6 +351,7 @@ def _download_proposal(
     result: ScanResult,
     keep_technical: bool = False,
     known_suppliers: dict[str, str | None] | None = None,
+    obras_base: Path | None = None,
 ) -> None:
     """Abre um e-mail identificado como proposta, baixa os anexos e enriquece.
 
@@ -354,7 +371,7 @@ def _download_proposal(
 
     baixados = _download_open_attachments(
         page, connection, message, codigo, obra, base_dir, result, keep_technical,
-        known_suppliers,
+        known_suppliers, obras_base,
     )
     # Depois de baixar, lê o corpo e o texto dos PDFs para achar códigos que
     # não estavam no assunto — reforça a confiança e pega processos citados
@@ -372,6 +389,7 @@ def _download_open_attachments(
     result: ScanResult,
     keep_technical: bool,
     known_suppliers: dict[str, str | None] | None = None,
+    obras_base: Path | None = None,
 ) -> list[Path]:
     """Baixa e arquiva os anexos-documento do e-mail já aberto.
 
@@ -403,14 +421,27 @@ def _download_open_attachments(
     gravados: list[Path] = []
     for item in selecionados:
         nome, fornecedor, tipo = item["filename"], item["supplier"], item["tipo"]
-        destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
-        # A pasta não é criada aqui: quem a cria é o download, depois de o
-        # arquivo já estar vindo (ver `browser_client.download_attachment`).
-        # Criá-la junto com o caminho deixava uma árvore vazia por cada
-        # download que falhava.
-        destino = attachments.unique_path(
-            destino_dir / attachments.proposal_file_name(fornecedor, nome)
+
+        # Prioridade 1: a árvore real do OneDrive, se configurada e se a
+        # obra/o RFQ desse processo já existirem nela. Prioridade 2 (o
+        # padrão, e o que sobra quando a obra/o RFQ não são achados): a
+        # árvore própria do app. A pasta em si não é criada aqui: quem cria
+        # é o download, depois de o arquivo já estar vindo (ver
+        # `browser_client.download_attachment`) — criá-la junto com o
+        # caminho deixava uma árvore vazia por cada download que falhava.
+        destino_onedrive = obra_folders.resolve_destination(
+            obras_base, obra, codigo, fornecedor
         )
+        if destino_onedrive is not None:
+            destino_dir = destino_onedrive
+            nome_arquivo = attachments.onedrive_file_name(
+                codigo, fornecedor, nome, destino_dir, quando=date.today()
+            )
+        else:
+            destino_dir = attachments.proposal_dir(base_dir, obra, codigo, fornecedor)
+            nome_arquivo = attachments.proposal_file_name(fornecedor, nome)
+
+        destino = attachments.unique_path(destino_dir / nome_arquivo)
         baixou = browser_client.download_attachment(page, nome, destino)
 
         storage.record_attachment(
@@ -480,6 +511,7 @@ def _deep_scan_message(
     result: ScanResult,
     keep_technical: bool = False,
     known_suppliers: dict[str, str | None] | None = None,
+    obras_base: Path | None = None,
 ) -> None:
     """Varredura profunda: abre um e-mail não identificado e lê o CORPO
     para achar o código escrito ali (não só no assunto).
@@ -522,7 +554,7 @@ def _deep_scan_message(
     # com o mesmo filtro e preferência pela comercial do download normal.
     _download_open_attachments(
         page, connection, message, codigo, obra, base_dir, result, keep_technical,
-        known_suppliers,
+        known_suppliers, obras_base,
     )
 
 

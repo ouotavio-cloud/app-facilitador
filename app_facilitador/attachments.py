@@ -10,6 +10,7 @@ nomes é o que dá para testar de verdade.
 
 import re
 import unicodedata
+from datetime import date
 from pathlib import Path
 
 # Extensões que valem como proposta. É uma lista de permissão, e não de
@@ -400,6 +401,48 @@ def proposal_dir(base: Path, obra: str | None, code: str, supplier: str) -> Path
         / sanitize(code, fallback="Sem processo")
         / sanitize(supplier, fallback="Fornecedor")
     )
+
+
+def onedrive_file_name(
+    codigo: str, fornecedor: str, filename: str, destino_dir: Path, quando: date | None = None
+) -> str:
+    """Nome do arquivo na árvore de obras do OneDrive (ver `obra_folders.py`).
+
+    Convenção diferente da árvore própria do app (que prefixa só o
+    fornecedor e mantém o nome original do anexo): aqui é
+    `processo - data - fornecedor - Rnn`, para o arquivo se identificar
+    sozinho já na pasta do fornecedor, sem depender do nome que o
+    fornecedor deu ao PDF.
+    """
+    extensao = Path(filename or "").suffix
+    processo = sanitize(codigo, fallback="Processo")
+    nome_fornecedor = sanitize(fornecedor, fallback="Fornecedor")
+    data_str = (quando or date.today()).strftime("%Y%m%d")
+    revisao = _next_revision(destino_dir, processo, nome_fornecedor)
+
+    return f"{processo} - {data_str} - {nome_fornecedor} - R{revisao:02d}{extensao}"
+
+
+def _next_revision(destino_dir: Path, processo: str, fornecedor: str) -> int:
+    """Quantas propostas desse fornecedor já existem para este processo, + 1.
+
+    Ignora a data no nome ao contar: a mesma proposta, revisada na semana
+    seguinte, não pode reiniciar em R01 só porque o dia mudou — é R02.
+    """
+    if not destino_dir.is_dir():
+        return 1
+
+    padrao = re.compile(
+        rf"^{re.escape(processo)} - \d{{8}} - {re.escape(fornecedor)} - R(\d+)",
+        re.IGNORECASE,
+    )
+    usados = [
+        int(encontrado.group(1))
+        for nome in (item.name for item in destino_dir.iterdir() if item.is_file())
+        for encontrado in [padrao.match(nome)]
+        if encontrado
+    ]
+    return max(usados, default=0) + 1
 
 
 def remove_empty_dirs(base: Path) -> int:

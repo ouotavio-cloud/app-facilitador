@@ -51,9 +51,18 @@ def test_add_process_appears_on_the_page(client):
 
 def test_add_process_normalizes_a_loosely_typed_code(client):
     """O cadastro precisa virar o mesmo formato que a busca produz."""
-    client.post("/processos", data={"codigo": "sup 2026 197", "obra": ""})
+    client.post("/processos", data={"codigo": "sup 2026 197", "obra": "657"})
 
     assert "SUP.2026-197" in _page(client)
+
+
+def test_add_process_requires_obra(client):
+    """O número da obra é o que casa o processo com a pasta dela no OneDrive."""
+    client.post("/processos", data={"codigo": "SUP.2026-321", "obra": ""})
+
+    page = _page(client)
+    assert "<code>SUP.2026-321</code>" not in page
+    assert "Informe o número da obra" in page
 
 
 def test_add_process_ignores_unrecognizable_code(client):

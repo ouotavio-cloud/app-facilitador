@@ -666,6 +666,92 @@ def test_habilitacao_junto_da_proposta_nao_e_baixada(outlook, tmp_path):
     assert resultado.downloaded == 1  # só a proposta
 
 
+# ---------- árvore real de obras no OneDrive ----------
+
+
+def _configurar_pasta_obras(caminho):
+    with storage.connect(config.DB_PATH) as conexao:
+        storage.set_setting(conexao, config.OBRAS_DIR_SETTING, str(caminho))
+
+
+def _montar_obra_no_onedrive(base, numero="659", codigo="SUP.2026-049", fornecedores=()):
+    obra = base / f"25.001 - {numero} ETA ITABIRA"
+    propostas = obra / "04. RFQs" / f"{codigo} - CABOS" / "3. PROPOSTAS TÉCNICA E COMERCIAL"
+    for fornecedor in fornecedores:
+        (propostas / fornecedor).mkdir(parents=True)
+    return propostas
+
+
+def test_com_pasta_de_obras_configurada_arquiva_na_arvore_real(outlook, tmp_path):
+    """Achando a obra e o RFQ, a proposta vai para a pasta real do time, não
+    para a árvore própria do app."""
+    onedrive = tmp_path / "OneDrive"
+    propostas = _montar_obra_no_onedrive(onedrive, fornecedores=("CABELAUTO",))
+    _configurar_pasta_obras(onedrive)
+    _cadastrar("SUP.2026-049", "659")
+    outlook["mensagens"] = [
+        _mensagem("c1", "Proposta SUP.2026-049", email="comercial@cabelauto.com.br")
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]})
+
+    resultado = scanner.scan()
+
+    arquivos = list((propostas / "CABELAUTO").iterdir())
+    assert resultado.downloaded == 1
+    assert len(arquivos) == 1
+    assert arquivos[0].name.startswith("SUP.2026-049 - ")
+    assert arquivos[0].name.endswith(" - R01.pdf")
+    # Nada foi criado na árvore própria do app.
+    assert not (tmp_path / "Propostas").exists()
+
+
+def test_fornecedor_sem_pasta_convidada_ganha_uma_nova_na_arvore_real(outlook, tmp_path):
+    onedrive = tmp_path / "OneDrive"
+    propostas = _montar_obra_no_onedrive(onedrive, fornecedores=("CABELAUTO",))
+    _configurar_pasta_obras(onedrive)
+    _cadastrar("SUP.2026-049", "659")
+    outlook["mensagens"] = [
+        _mensagem("c1", "Proposta SUP.2026-049", email="c@wireflexcabos.com.br")
+    ]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]})
+
+    scanner.scan()
+
+    assert (propostas / "Wireflexcabos").is_dir()
+
+
+def test_sem_obra_ou_rfq_encontrado_cai_na_arvore_antiga(outlook, tmp_path):
+    """A obra 659 existe no OneDrive, mas sem esse RFQ dentro — fallback."""
+    onedrive = tmp_path / "OneDrive"
+    _montar_obra_no_onedrive(onedrive, codigo="SUP.2026-999", fornecedores=("CABELAUTO",))
+    _configurar_pasta_obras(onedrive)
+    _cadastrar("SUP.2026-049", "659")
+    outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-049")]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]})
+
+    resultado = scanner.scan()
+
+    assert resultado.downloaded == 1
+    assert (
+        tmp_path / "Propostas" / "659" / "SUP.2026-049" / "Aciotubos"
+        / "Aciotubos - Orçamento.pdf"
+    ).exists()
+
+
+def test_pasta_de_obras_nao_configurada_usa_arvore_antiga_como_sempre(outlook, tmp_path):
+    """Sem configurar nada, nenhum comportamento muda para quem não usa o recurso."""
+    _cadastrar("SUP.2026-049", "659")
+    outlook["mensagens"] = [_mensagem("c1", "Proposta SUP.2026-049")]
+    outlook["pagina"] = _PaginaFalsa({"c1": ["Orçamento.pdf"]})
+
+    scanner.scan()
+
+    assert (
+        tmp_path / "Propostas" / "659" / "SUP.2026-049" / "Aciotubos"
+        / "Aciotubos - Orçamento.pdf"
+    ).exists()
+
+
 def test_sem_varredura_profunda_email_nao_identificado_nao_e_aberto(outlook):
     """Sem deep scan, e-mail que não casou por assunto não é aberto (não marca lido)."""
     _cadastrar("SUP.2026-197")

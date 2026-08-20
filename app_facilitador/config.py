@@ -33,6 +33,13 @@ DEFAULT_PROPOSALS_DIR = Path.home() / "Documents" / "App Facilitador" / "Propost
 # Chave da preferência que guarda a escolha do usuário (tabela settings).
 PROPOSALS_DIR_SETTING = "pasta_propostas"
 
+# Pasta raiz das obras no OneDrive (ex.: "__14. OBRAS"), para arquivar a
+# proposta na estrutura que o time já mantém manualmente — ver
+# `obra_folders.py` — em vez da árvore própria do app. Sem essa preferência
+# configurada (o padrão), o recurso fica desligado e tudo vai para
+# `DEFAULT_PROPOSALS_DIR`/`PROPOSALS_DIR_SETTING` como sempre.
+OBRAS_DIR_SETTING = "pasta_obras_onedrive"
+
 # Automação do Outlook Web (usada quando a Graph API está bloqueada por
 # política de TI e não há cache local legível do novo Outlook).
 OWA_URL = "https://outlook.office.com/mail/"

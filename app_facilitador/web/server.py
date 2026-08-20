@@ -79,6 +79,7 @@ def create_app() -> Flask:
             total_messages = storage.count_messages(connection)
             arquivos = storage.attachments_by_conversation(connection)
             pasta_propostas = scanner.proposals_dir(connection)
+            pasta_obras = scanner.obras_dir(connection)
 
         for proposta in proposals:
             proposta["arquivos"] = arquivos.get(proposta["conv_id"], [])
@@ -99,6 +100,7 @@ def create_app() -> Flask:
             resumo=_daily_summary(processes, proposals, meetings, total_messages),
             data_dir=str(config.BASE_DIR),
             pasta_propostas=str(pasta_propostas),
+            pasta_obras=str(pasta_obras) if pasta_obras else "",
             total_arquivos=sum(len(v) for v in arquivos.values()),
         )
 
@@ -114,6 +116,22 @@ def create_app() -> Flask:
         with storage.connect() as connection:
             storage.set_setting(
                 connection, config.PROPOSALS_DIR_SETTING, escolhida or None
+            )
+        return redirect(url_for("index"))
+
+    @app.post("/pasta-obras")
+    def set_obras_dir():
+        """Muda a raiz das obras no OneDrive (ver `obra_folders.py`).
+
+        Configurada, a proposta passa a ser arquivada dentro da obra e do
+        RFQ que o time já mantém manualmente lá, em vez da árvore própria
+        do app. Em branco desliga o recurso — volta tudo para
+        `pasta_propostas`, como se nunca tivesse sido configurada.
+        """
+        escolhida = (request.form.get("pasta") or "").strip()
+        with storage.connect() as connection:
+            storage.set_setting(
+                connection, config.OBRAS_DIR_SETTING, escolhida or None
             )
         return redirect(url_for("index"))
 
@@ -155,9 +173,18 @@ def create_app() -> Flask:
         # digitado "sup 2026 197" nunca casaria com o código achado no
         # e-mail se fosse gravado como veio.
         codes = proposal_detector.find_proposal_codes(code_input)
-        if codes:
-            with storage.connect() as connection:
-                storage.add_process(connection, codes[0], obra, deadline)
+        if not codes:
+            return redirect(url_for("index"))
+
+        # Obrigatório: é o número da obra (ex. "659") que casa o processo
+        # com a pasta real dela no OneDrive (ver `obra_folders.py`), além de
+        # já servir como segunda pista na busca por assunto.
+        if not obra:
+            flash("Informe o número da obra para cadastrar o processo.")
+            return redirect(url_for("index"))
+
+        with storage.connect() as connection:
+            storage.add_process(connection, codes[0], obra, deadline)
 
         return redirect(url_for("index"))
 

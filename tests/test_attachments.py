@@ -5,6 +5,8 @@ arquivo vale a pena guardar, e como não sobrescrever uma proposta ao
 receber a revisão dela.
 """
 
+from datetime import date
+
 import pytest
 
 from app_facilitador import attachments
@@ -421,3 +423,69 @@ class TestPastasVazias:
 
     def test_pasta_inexistente_nao_quebra(self, tmp_path):
         assert attachments.remove_empty_dirs(tmp_path / "nao-existe") == 0
+
+
+class TestNomeDeArquivoParaOOneDrive:
+    """Convenção da árvore real do OneDrive: processo + data + fornecedor + revisão.
+
+    Diferente da árvore própria do app (fornecedor + nome original do
+    anexo) — ver `obra_folders.py` para onde essa pasta é achada.
+    """
+
+    def test_monta_o_nome_com_revisao_01_na_primeira_vez(self, tmp_path):
+        nome = attachments.onedrive_file_name(
+            "SUP.2026-049", "CABELAUTO", "Orçamento.pdf", tmp_path,
+            quando=date(2026, 8, 20),
+        )
+
+        assert nome == "SUP.2026-049 - 20260820 - CABELAUTO - R01.pdf"
+
+    def test_preserva_a_extensao_original(self, tmp_path):
+        nome = attachments.onedrive_file_name(
+            "SUP.2026-049", "CABELAUTO", "Planilha.xlsx", tmp_path,
+            quando=date(2026, 8, 20),
+        )
+
+        assert nome.endswith(".xlsx")
+
+    def test_incrementa_a_revisao_quando_ja_existe_proposta_do_mesmo_par(self, tmp_path):
+        (tmp_path / "SUP.2026-049 - 20260810 - CABELAUTO - R01.pdf").write_text("v1")
+
+        nome = attachments.onedrive_file_name(
+            "SUP.2026-049", "CABELAUTO", "Orçamento.pdf", tmp_path,
+            quando=date(2026, 8, 20),
+        )
+
+        assert nome == "SUP.2026-049 - 20260820 - CABELAUTO - R02.pdf"
+
+    def test_revisao_conta_mesmo_com_data_diferente(self, tmp_path):
+        """A revisão da semana seguinte não pode reiniciar em R01."""
+        (tmp_path / "SUP.2026-049 - 20260101 - CABELAUTO - R01.pdf").write_text("v1")
+        (tmp_path / "SUP.2026-049 - 20260201 - CABELAUTO - R02.pdf").write_text("v2")
+
+        nome = attachments.onedrive_file_name(
+            "SUP.2026-049", "CABELAUTO", "Orçamento.pdf", tmp_path,
+            quando=date(2026, 8, 20),
+        )
+
+        assert nome == "SUP.2026-049 - 20260820 - CABELAUTO - R03.pdf"
+
+    def test_revisao_e_independente_por_fornecedor(self, tmp_path):
+        """Um fornecedor não conta como revisão de outro no mesmo processo."""
+        (tmp_path / "SUP.2026-049 - 20260101 - CABELAUTO - R01.pdf").write_text("v1")
+
+        nome = attachments.onedrive_file_name(
+            "SUP.2026-049", "COPERCABOS", "Orçamento.pdf", tmp_path,
+            quando=date(2026, 8, 20),
+        )
+
+        assert nome == "SUP.2026-049 - 20260820 - COPERCABOS - R01.pdf"
+
+    def test_pasta_de_destino_ainda_nao_existe(self, tmp_path):
+        """Primeiro download para este fornecedor: a pasta nem foi criada ainda."""
+        nome = attachments.onedrive_file_name(
+            "SUP.2026-049", "CABELAUTO", "Orçamento.pdf", tmp_path / "CABELAUTO",
+            quando=date(2026, 8, 20),
+        )
+
+        assert nome == "SUP.2026-049 - 20260820 - CABELAUTO - R01.pdf"
