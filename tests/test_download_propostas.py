@@ -411,19 +411,19 @@ def test_falha_no_download_nao_deixa_pasta_vazia(outlook, tmp_path):
     assert not (tmp_path / "Propostas" / "661").exists()
 
 
-def test_varredura_recolhe_pastas_vazias_que_ja_existiam(outlook, tmp_path):
-    """Faxina do estrago das versões anteriores, sem tocar no que tem arquivo."""
+def test_varredura_nunca_apaga_pasta_vazia_preexistente(outlook, tmp_path):
+    """O app não decide sozinho o que é 'lixo' numa pasta que não é só dele.
+
+    Já existiu uma faxina automática de pastas vazias no fim da varredura;
+    saiu a pedido do usuário — apagar pasta, mesmo vazia, é risco demais
+    numa árvore que pode ter organização manual dele por dentro."""
     propostas = tmp_path / "Propostas"
-    (propostas / "661" / "SUP.2026-186" / "Engeform").mkdir(parents=True)
-    guardada = propostas / "657" / "SUP.2026-197" / "Molivetto2"
-    guardada.mkdir(parents=True)
-    (guardada / "Molivetto2 - Proposta.pdf").write_text("proposta de verdade")
+    vazia = propostas / "661" / "SUP.2026-186" / "Engeform"
+    vazia.mkdir(parents=True)
 
-    resultado = scanner.scan()
+    scanner.scan()
 
-    assert not (propostas / "661").exists()
-    assert (guardada / "Molivetto2 - Proposta.pdf").exists()
-    assert resultado.empty_dirs_removed == 3
+    assert vazia.is_dir()
 
 
 def test_falha_no_download_salva_html_para_diagnostico(outlook):
